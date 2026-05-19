@@ -1,0 +1,11 @@
+editors = ["fresh", "zed", "nvim", "code"]
+
+[keybindings]
+next = "j"
+previous = "k"
+advance = "enter"
+hold = "h"
+quit = "q"
+edit = "e"
+toggle_view = "v"
+help = "?"

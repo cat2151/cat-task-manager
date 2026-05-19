@@ -1,0 +1,8 @@
+title: "cat-task-manager"
+description: "cat-task-manager"
+theme: jekyll-theme-slate
+github:
+  is_project_page: true
+  repository_url: https://github.com/cat2151/cat-task-manager
+plugins:
+  - jekyll-sitemap

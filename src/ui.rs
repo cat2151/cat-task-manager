@@ -1,0 +1,341 @@
+use chrono::Duration;
+use ratatui::{
+    layout::{Constraint, Direction, Layout, Rect},
+    style::{Color, Modifier, Style},
+    text::{Line, Span},
+    widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph},
+    Frame,
+};
+
+use crate::{
+    app::{App, DailyTask, TaskState, ViewMode},
+    event::KeyBindings,
+};
+
+const MONOKAI_BG: Color = Color::Rgb(39, 40, 34);
+const MONOKAI_FG: Color = Color::Rgb(248, 248, 242);
+const MONOKAI_COMMENT: Color = Color::Rgb(117, 113, 94);
+const MONOKAI_SELECTION: Color = Color::Rgb(73, 72, 62);
+const MONOKAI_PINK: Color = Color::Rgb(249, 38, 114);
+const MONOKAI_GREEN: Color = Color::Rgb(166, 226, 46);
+const MONOKAI_YELLOW: Color = Color::Rgb(230, 219, 116);
+const MONOKAI_ORANGE: Color = Color::Rgb(253, 151, 31);
+const MONOKAI_BLUE: Color = Color::Rgb(102, 217, 239);
+
+pub fn draw(frame: &mut Frame, app: &App, keybindings: &KeyBindings) {
+    frame.render_widget(Block::default().style(base_style()), frame.area());
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3),
+            Constraint::Min(1),
+            Constraint::Length(3),
+        ])
+        .split(frame.area());
+
+    let header = Paragraph::new(Line::from(vec![
+        Span::styled("cat-task-manager", emphasized_style(MONOKAI_PINK)),
+        Span::styled(format!("  {}", app.current_date), base_style()),
+        Span::styled(
+            format!("  表示: {}", app.view_mode().label()),
+            fg_style(MONOKAI_BLUE),
+        ),
+    ]))
+    .style(base_style())
+    .block(themed_block("今日のタスク"));
+    frame.render_widget(header, chunks[0]);
+
+    match app.view_mode() {
+        ViewMode::OneLine => draw_one_line(frame, chunks[1], app),
+        ViewMode::Incomplete => draw_incomplete_list(frame, chunks[1], app),
+        ViewMode::All => draw_all_list(frame, chunks[1], app),
+    }
+
+    draw_footer(frame, chunks[2], app);
+
+    if app.show_help() {
+        draw_help(frame, frame.area(), keybindings);
+    }
+}
+
+fn draw_one_line(frame: &mut Frame, area: Rect, app: &App) {
+    if let Some((_, task)) = app.selected_visible_task() {
+        let task = Paragraph::new(task_line(task, false))
+            .style(base_style())
+            .block(themed_block("現在のタスク"));
+        frame.render_widget(task, area);
+    } else {
+        let empty = Paragraph::new("表示対象のタスクはありません")
+            .style(base_style())
+            .block(themed_block("現在のタスク"));
+        frame.render_widget(empty, area);
+    }
+}
+
+fn draw_incomplete_list(frame: &mut Frame, area: Rect, app: &App) {
+    let visible_tasks = app.visible_tasks();
+    let items: Vec<ListItem> = visible_tasks
+        .iter()
+        .map(|(_, task)| ListItem::new(task_line(task, false)))
+        .collect();
+
+    if items.is_empty() {
+        let empty = Paragraph::new("表示対象のタスクはありません")
+            .style(base_style())
+            .block(themed_block("未完了タスク"));
+        frame.render_widget(empty, area);
+    } else {
+        let mut state = ListState::default();
+        state.select(Some(app.selected_visible().min(items.len() - 1)));
+        let list = List::new(items)
+            .style(base_style())
+            .block(themed_block("未完了タスク"))
+            .highlight_style(
+                Style::default()
+                    .fg(MONOKAI_YELLOW)
+                    .bg(MONOKAI_SELECTION)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .highlight_symbol("> ");
+        frame.render_stateful_widget(list, area, &mut state);
+    }
+}
+
+fn draw_all_list(frame: &mut Frame, area: Rect, app: &App) {
+    let lines = all_task_lines(app);
+    let items: Vec<ListItem> = lines.into_iter().map(ListItem::new).collect();
+
+    if items.is_empty() {
+        let empty = Paragraph::new("タスクはありません")
+            .style(base_style())
+            .block(themed_block("全体タスク"));
+        frame.render_widget(empty, area);
+    } else {
+        let mut state = ListState::default();
+        state.select(app.selected_task_index());
+        let list = List::new(items)
+            .style(base_style())
+            .block(themed_block("全体タスク"))
+            .highlight_style(
+                Style::default()
+                    .fg(MONOKAI_YELLOW)
+                    .bg(MONOKAI_SELECTION)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .highlight_symbol("> ");
+        frame.render_stateful_widget(list, area, &mut state);
+    }
+}
+
+fn all_task_lines(app: &App) -> Vec<Line<'_>> {
+    app.tasks.iter().map(|task| task_line(task, true)).collect()
+}
+
+fn draw_footer(frame: &mut Frame, area: Rect, app: &App) {
+    let footer = Paragraph::new(Line::from(vec![
+        Span::styled("? : help", emphasized_style(MONOKAI_YELLOW)),
+        Span::styled("  ", base_style()),
+        Span::styled(app.message(), fg_style(MONOKAI_BLUE)),
+    ]))
+    .style(base_style())
+    .block(themed_block("status"));
+    frame.render_widget(footer, area);
+}
+
+fn draw_help(frame: &mut Frame, area: Rect, keybindings: &KeyBindings) {
+    let area = centered_rect(58, 13, area);
+    let help = Paragraph::new(help_lines(keybindings))
+        .style(base_style())
+        .block(themed_block("help"));
+
+    frame.render_widget(Clear, area);
+    frame.render_widget(help, area);
+}
+
+fn help_lines(keybindings: &KeyBindings) -> Vec<Line<'static>> {
+    vec![
+        help_line(keybindings.next.label(), "次のタスクへ移動"),
+        help_line(keybindings.previous.label(), "前のタスクへ移動"),
+        help_line(keybindings.advance.label(), "開始/完了"),
+        help_line(keybindings.hold.label(), "保留/再開"),
+        help_line(keybindings.toggle_view.label(), "表示切替"),
+        help_line(keybindings.edit.label(), "tasks.txt 編集"),
+        help_line(keybindings.quit.label(), "終了"),
+        help_line(keybindings.help.label(), "help 表示/閉じる"),
+        help_line("esc", "help を閉じる"),
+    ]
+}
+
+fn help_line(key: &str, description: &str) -> Line<'static> {
+    Line::from(vec![
+        Span::styled(format!("{key:<12}"), emphasized_style(MONOKAI_YELLOW)),
+        Span::styled(description.to_string(), base_style()),
+    ])
+}
+
+fn task_line(task: &DailyTask, show_completed_duration: bool) -> Line<'_> {
+    let mut spans = vec![
+        Span::styled(format!("{:>2}. ", task.order), fg_style(MONOKAI_COMMENT)),
+        Span::styled(&task.name, base_style()),
+        Span::styled("  ", base_style()),
+        Span::styled(
+            task.state.label(),
+            fg_style(state_color(task.state.label())),
+        ),
+    ];
+
+    if let Some(started_at) = task.started_at {
+        spans.push(Span::styled("  ", base_style()));
+        spans.push(Span::styled(
+            format!("開始 {}", started_at.format("%H:%M")),
+            fg_style(MONOKAI_BLUE),
+        ));
+    }
+
+    if show_completed_duration {
+        if let Some(duration) = completed_work_duration(task) {
+            spans.push(Span::styled("  ", base_style()));
+            spans.push(Span::styled(
+                format!("作業時間 {}", format_work_duration(duration)),
+                fg_style(MONOKAI_GREEN),
+            ));
+        }
+    }
+
+    Line::from(spans)
+}
+
+fn completed_work_duration(task: &DailyTask) -> Option<Duration> {
+    if task.state != TaskState::Done {
+        return None;
+    }
+
+    let duration = task.completed_at? - task.started_at?;
+    (duration >= Duration::zero()).then_some(duration)
+}
+
+fn format_work_duration(duration: Duration) -> String {
+    let total_seconds = duration.num_seconds();
+    if total_seconds < 60 {
+        return format!("{total_seconds}秒");
+    }
+
+    let total_minutes = total_seconds / 60;
+    let hours = total_minutes / 60;
+    let minutes = total_minutes % 60;
+
+    match (hours, minutes) {
+        (0, minutes) => format!("{minutes}分"),
+        (hours, 0) => format!("{hours}時間"),
+        (hours, minutes) => format!("{hours}時間{minutes}分"),
+    }
+}
+
+fn state_color(label: &str) -> Color {
+    match label {
+        "未着手" => MONOKAI_COMMENT,
+        "実施中" => MONOKAI_GREEN,
+        "保留" => MONOKAI_ORANGE,
+        "完了" => MONOKAI_BLUE,
+        "時間切れ" => MONOKAI_PINK,
+        _ => MONOKAI_FG,
+    }
+}
+
+fn themed_block(title: &'static str) -> Block<'static> {
+    Block::default()
+        .borders(Borders::ALL)
+        .border_style(fg_style(MONOKAI_COMMENT))
+        .style(base_style())
+        .title(Line::from(Span::styled(
+            title,
+            emphasized_style(MONOKAI_GREEN),
+        )))
+}
+
+fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
+    let width = width.min(area.width);
+    let height = height.min(area.height);
+    Rect::new(
+        area.x + area.width.saturating_sub(width) / 2,
+        area.y + area.height.saturating_sub(height) / 2,
+        width,
+        height,
+    )
+}
+
+fn base_style() -> Style {
+    Style::default().fg(MONOKAI_FG).bg(MONOKAI_BG)
+}
+
+fn fg_style(color: Color) -> Style {
+    base_style().fg(color)
+}
+
+fn emphasized_style(color: Color) -> Style {
+    fg_style(color).add_modifier(Modifier::BOLD)
+}
+
+#[cfg(test)]
+mod tests {
+    use chrono::{DateTime, Local, NaiveDate};
+
+    use super::*;
+    use crate::storage::Task;
+
+    fn task(name: &str, order: u32, source_line: u32) -> Task {
+        Task {
+            name: name.to_string(),
+            order,
+            source_line,
+        }
+    }
+
+    fn timestamp(value: &str) -> DateTime<Local> {
+        DateTime::parse_from_rfc3339(value)
+            .unwrap()
+            .with_timezone(&Local)
+    }
+
+    fn line_text(line: &Line<'_>) -> String {
+        line.spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect()
+    }
+
+    #[test]
+    fn all_task_lines_include_completed_tasks_with_work_duration() {
+        let mut app = App::new(
+            vec![task("done", 1, 1), task("next", 2, 2)],
+            NaiveDate::from_ymd_opt(2026, 5, 18).unwrap(),
+        );
+        app.tasks[0].state = TaskState::Done;
+        app.tasks[0].started_at = Some(timestamp("2026-05-18T09:00:00+09:00"));
+        app.tasks[0].completed_at = Some(timestamp("2026-05-18T10:05:00+09:00"));
+
+        let lines = all_task_lines(&app);
+
+        assert_eq!(lines.len(), 2);
+        assert!(line_text(&lines[0]).contains("完了"));
+        assert!(line_text(&lines[0]).contains("作業時間 1時間5分"));
+        assert!(line_text(&lines[1]).contains("未着手"));
+    }
+
+    #[test]
+    fn one_line_task_line_does_not_show_completed_duration() {
+        let task = DailyTask {
+            name: "done".to_string(),
+            order: 1,
+            source_line: 1,
+            state: TaskState::Done,
+            started_at: Some(timestamp("2026-05-18T09:00:00+09:00")),
+            completed_at: Some(timestamp("2026-05-18T09:05:00+09:00")),
+        };
+
+        let line = task_line(&task, false);
+
+        assert!(!line_text(&line).contains("作業時間"));
+    }
+}
