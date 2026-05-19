@@ -2,6 +2,7 @@
 name = "cat-task-manager"
 version = "0.1.0"
 edition = "2021"
+build = "build.rs"
 
 [dependencies]
 ratatui = { version = "0.30.0", default-features = false, features = ["crossterm_0_29"] }
@@ -10,3 +11,4 @@ serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.145"
 toml = "1.1.2"
 chrono = "0.4.44"
+cat-self-update-lib = { git = "https://github.com/cat2151/cat-self-update", branch = "main", package = "cat-self-update-lib" }

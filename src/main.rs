@@ -1,4 +1,4 @@
-use std::{error::Error, io, path::Path, process::Command, sync::mpsc};
+use std::{env, error::Error, io, path::Path, process::Command, sync::mpsc};
 
 use crossterm::{
     cursor::{Hide, Show},
@@ -8,9 +8,11 @@ use crossterm::{
 use ratatui::{backend::CrosstermBackend, Terminal};
 
 mod app;
+mod cli;
 mod clock;
 mod event;
 mod logging;
+mod self_update;
 mod storage;
 mod ui;
 
@@ -18,6 +20,34 @@ use app::{App, DailyTask};
 use event::AppEvent;
 
 fn main() -> Result<(), Box<dyn Error>> {
+    match cli::parse(env::args()) {
+        Ok(cli::Command::RunApp) => run_app(),
+        Ok(cli::Command::Update) => {
+            if let Err(err) = self_update::run_update() {
+                eprintln!("Update failed: {err}");
+                std::process::exit(1);
+            }
+            Ok(())
+        }
+        Ok(cli::Command::Check) => {
+            if let Err(err) = self_update::run_check() {
+                eprintln!("Check failed: {err}");
+                std::process::exit(1);
+            }
+            Ok(())
+        }
+        Ok(cli::Command::Help) => {
+            print!("{}", cli::HELP);
+            Ok(())
+        }
+        Err(err) => {
+            eprintln!("{err}\n\n{}", cli::HELP.trim_end());
+            std::process::exit(2);
+        }
+    }
+}
+
+fn run_app() -> Result<(), Box<dyn Error>> {
     let paths = storage::app_paths()?;
     storage::ensure_app_storage(&paths)?;
     let logger = logging::AppLogger::new(&paths.root_dir)?;
