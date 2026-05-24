@@ -1,5 +1,7 @@
 use super::*;
 use crate::storage::KeyBindingsConfig;
+use crate::storage::Task;
+use chrono::DateTime;
 use crossterm::event::KeyModifiers;
 use std::path::PathBuf;
 
@@ -150,7 +152,31 @@ fn starts_in_one_line_mode_and_toggles_view_mode() {
 }
 
 #[test]
-fn tab_keys_switch_current_tab() {
+fn all_tab_is_leftmost_and_lists_tasks_in_tab_order() {
+    let app = App::new(
+        vec![
+            task_list("0730", vec![task("a", 1, 1), task("b", 2, 2)]),
+            task_list("0800", vec![task("c", 1, 1)]),
+        ],
+        NaiveDate::from_ymd_opt(2026, 5, 18).unwrap(),
+    );
+
+    let names: Vec<&str> = app
+        .current_tasks()
+        .into_iter()
+        .map(|task| task.name.as_str())
+        .collect();
+
+    assert_eq!(app.current_tab_label(), "all");
+    assert!(app.current_tab_is_all());
+    assert_eq!(app.current_tab_path(), None);
+    assert_eq!(app.display_tab_label(0), Some("all"));
+    assert_eq!(app.display_tab_label(1), Some("0730"));
+    assert_eq!(names, vec!["a", "b", "c"]);
+}
+
+#[test]
+fn tab_keys_switch_current_tab_from_all_tab() {
     let mut app = App::new(
         vec![
             task_list("0730", vec![task("a", 1, 1)]),
@@ -160,6 +186,11 @@ fn tab_keys_switch_current_tab() {
     );
     let keybindings = KeyBindings::from_config(KeyBindingsConfig::default()).unwrap();
 
+    assert_eq!(app.current_tab_label(), "all");
+    app.handle_key(
+        KeyEvent::new(KeyCode::Char('l'), KeyModifiers::empty()),
+        &keybindings,
+    );
     assert_eq!(app.current_tab_label(), "0730");
     app.handle_key(
         KeyEvent::new(KeyCode::Char('l'), KeyModifiers::empty()),
@@ -171,6 +202,32 @@ fn tab_keys_switch_current_tab() {
         &keybindings,
     );
     assert_eq!(app.current_tab_label(), "0730");
+}
+
+#[test]
+fn all_tab_advances_tasks_across_file_tabs() {
+    let mut app = App::new(
+        vec![
+            task_list("0730", vec![task("a", 1, 1)]),
+            task_list("0800", vec![task("b", 1, 1)]),
+        ],
+        NaiveDate::from_ymd_opt(2026, 5, 18).unwrap(),
+    );
+
+    app.advance_selected();
+    assert_eq!(app.tabs[0].tasks[0].state, TaskState::InProgress);
+
+    app.select_next();
+    app.advance_selected();
+    assert_eq!(app.tabs[1].tasks[0].state, TaskState::NotStarted);
+    assert_eq!(app.message(), "前のタスクが完了していません");
+
+    app.select_previous();
+    app.advance_selected();
+    assert_eq!(app.tabs[0].tasks[0].state, TaskState::Done);
+
+    app.advance_selected();
+    assert_eq!(app.tabs[1].tasks[0].state, TaskState::InProgress);
 }
 
 #[test]

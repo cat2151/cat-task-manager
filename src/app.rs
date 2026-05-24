@@ -1,87 +1,22 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
-use chrono::{DateTime, Local, NaiveDate};
+use chrono::{Local, NaiveDate};
 use crossterm::event::{KeyCode, KeyEvent};
 
 use crate::{
     event::KeyBindings,
-    storage::{self, Task, TaskStatus},
+    storage::{self, TaskStatus},
 };
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum TaskState {
-    NotStarted,
-    InProgress,
-    Done,
-    TimeOut,
-    OnHold,
-}
+mod model;
+pub use model::{DailyTask, TaskList, TaskState, TaskTab, ViewMode};
 
-impl TaskState {
-    pub fn on_day_changed(&self) -> Self {
-        match self {
-            TaskState::Done => TaskState::Done,
-            _ => TaskState::TimeOut,
-        }
-    }
+const ALL_TAB_LABEL: &str = "all";
 
-    pub fn label(&self) -> &'static str {
-        match self {
-            TaskState::NotStarted => "未着手",
-            TaskState::InProgress => "実施中",
-            TaskState::Done => "完了",
-            TaskState::TimeOut => "時間切れ",
-            TaskState::OnHold => "保留",
-        }
-    }
-
-    pub fn visible(&self) -> bool {
-        matches!(
-            self,
-            TaskState::NotStarted | TaskState::InProgress | TaskState::OnHold
-        )
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ViewMode {
-    OneLine,
-    Incomplete,
-    All,
-}
-
-impl ViewMode {
-    pub fn label(self) -> &'static str {
-        match self {
-            ViewMode::OneLine => "1行",
-            ViewMode::Incomplete => "未完了",
-            ViewMode::All => "全体表示",
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct DailyTask {
-    pub name: String,
-    pub order: u32,
-    pub source_line: u32,
-    pub state: TaskState,
-    pub started_at: Option<DateTime<Local>>,
-    pub completed_at: Option<DateTime<Local>>,
-}
-
-#[derive(Debug, Clone)]
-pub struct TaskList {
-    pub label: String,
-    pub path: PathBuf,
-    pub tasks: Vec<Task>,
-}
-
-#[derive(Debug, Clone)]
-pub struct TaskTab {
-    pub label: String,
-    pub path: PathBuf,
-    pub tasks: Vec<DailyTask>,
+#[derive(Debug, Clone, Copy)]
+struct TaskLocation {
+    tab_index: usize,
+    task_index: usize,
 }
 
 #[derive(Debug)]
@@ -134,10 +69,10 @@ impl App {
     }
 
     pub fn visible_tasks(&self) -> Vec<(usize, &DailyTask)> {
-        self.current_tasks()
-            .iter()
-            .enumerate()
-            .filter(|(_, task)| task.state.visible())
+        self.current_task_entries()
+            .into_iter()
+            .filter(|(_, _, task)| task.state.visible())
+            .map(|(display_index, _, task)| (display_index, task))
             .collect()
     }
 
@@ -157,24 +92,40 @@ impl App {
         &self.tabs
     }
 
+    pub fn display_tab_count(&self) -> usize {
+        self.tabs.len() + 1
+    }
+
+    pub fn display_tab_label(&self, index: usize) -> Option<&str> {
+        if index == 0 {
+            Some(ALL_TAB_LABEL)
+        } else {
+            self.tabs.get(index - 1).map(|tab| tab.label.as_str())
+        }
+    }
+
     pub fn selected_tab(&self) -> usize {
         self.selected_tab
     }
 
-    pub fn current_tab(&self) -> &TaskTab {
-        &self.tabs[self.selected_tab]
+    pub fn current_tab_is_all(&self) -> bool {
+        self.selected_tab == 0
     }
 
     pub fn current_tab_label(&self) -> &str {
-        &self.current_tab().label
+        self.display_tab_label(self.selected_tab)
+            .unwrap_or(ALL_TAB_LABEL)
     }
 
-    pub fn current_tab_path(&self) -> &Path {
-        &self.current_tab().path
+    pub fn current_tab_path(&self) -> Option<&Path> {
+        self.current_file_tab().map(|tab| tab.path.as_path())
     }
 
-    pub fn current_tasks(&self) -> &[DailyTask] {
-        &self.current_tab().tasks
+    pub fn current_tasks(&self) -> Vec<&DailyTask> {
+        self.current_task_entries()
+            .into_iter()
+            .map(|(_, _, task)| task)
+            .collect()
     }
 
     pub fn show_help(&self) -> bool {
@@ -190,11 +141,19 @@ impl App {
     }
 
     pub fn replace_tabs(&mut self, task_lists: Vec<TaskList>) {
-        let selected_path = self.tabs.get(self.selected_tab).map(|tab| tab.path.clone());
+        let selected_path = self.current_tab_path().map(Path::to_path_buf);
         self.tabs = task_lists.into_iter().map(task_tab_from_list).collect();
         self.selected_tab = selected_path
-            .and_then(|selected_path| self.tabs.iter().position(|tab| tab.path == selected_path))
-            .unwrap_or_else(|| self.selected_tab.min(self.tabs.len().saturating_sub(1)));
+            .and_then(|selected_path| {
+                self.tabs
+                    .iter()
+                    .position(|tab| tab.path == selected_path)
+                    .map(|index| index + 1)
+            })
+            .unwrap_or_else(|| {
+                self.selected_tab
+                    .min(self.display_tab_count().saturating_sub(1))
+            });
         self.clamp_selection();
     }
 
@@ -237,43 +196,31 @@ impl App {
     }
 
     fn select_next_tab(&mut self) {
-        if self.tabs.is_empty() {
-            self.selected_tab = 0;
-            self.selected_visible = 0;
-            return;
-        }
-
-        self.selected_tab = (self.selected_tab + 1) % self.tabs.len();
+        self.selected_tab = (self.selected_tab + 1) % self.display_tab_count();
         self.selected_visible = 0;
         self.message = format!("タブ: {}", self.current_tab_label());
     }
 
     fn select_previous_tab(&mut self) {
-        if self.tabs.is_empty() {
-            self.selected_tab = 0;
-            self.selected_visible = 0;
-            return;
-        }
-
         self.selected_tab = self
             .selected_tab
             .checked_sub(1)
-            .unwrap_or_else(|| self.tabs.len() - 1);
+            .unwrap_or_else(|| self.display_tab_count() - 1);
         self.selected_visible = 0;
         self.message = format!("タブ: {}", self.current_tab_label());
     }
 
     fn advance_selected(&mut self) {
-        let Some(index) = self.selected_task_index() else {
+        let Some((display_index, location)) = self.selected_task_location() else {
             self.message = "表示対象のタスクがありません".to_string();
             return;
         };
 
-        match self.current_tasks()[index].state {
+        match self.task_at(location).state.clone() {
             TaskState::NotStarted => {
-                if self.previous_task_is_done(index) {
+                if self.previous_task_is_done(display_index) {
                     let now = Local::now();
-                    let task = &mut self.tabs[self.selected_tab].tasks[index];
+                    let task = self.task_at_mut(location);
                     task.state = TaskState::InProgress;
                     task.started_at = Some(now);
                     task.completed_at = None;
@@ -284,7 +231,7 @@ impl App {
             }
             TaskState::InProgress => {
                 let now = Local::now();
-                let task = &mut self.tabs[self.selected_tab].tasks[index];
+                let task = self.task_at_mut(location);
                 task.state = TaskState::Done;
                 if task.started_at.is_none() {
                     task.started_at = Some(now);
@@ -301,12 +248,12 @@ impl App {
     }
 
     fn toggle_hold_selected(&mut self) {
-        let Some(index) = self.selected_task_index() else {
+        let Some((_, location)) = self.selected_task_location() else {
             self.message = "表示対象のタスクがありません".to_string();
             return;
         };
 
-        let task = &mut self.tabs[self.selected_tab].tasks[index];
+        let task = self.task_at_mut(location);
         match task.state {
             TaskState::InProgress => {
                 task.state = TaskState::OnHold;
@@ -347,10 +294,7 @@ impl App {
     }
 
     fn visible_count(&self) -> usize {
-        self.current_tasks()
-            .iter()
-            .filter(|task| task.state.visible())
-            .count()
+        self.visible_tasks().len()
     }
 
     fn clamp_selection(&mut self) {
@@ -362,8 +306,14 @@ impl App {
         }
     }
 
-    fn previous_task_is_done(&self, index: usize) -> bool {
-        index == 0 || self.current_tasks()[index - 1].state == TaskState::Done
+    fn previous_task_is_done(&self, display_index: usize) -> bool {
+        if display_index == 0 {
+            return true;
+        }
+
+        self.current_task_entries()
+            .get(display_index - 1)
+            .is_some_and(|(_, _, task)| task.state == TaskState::Done)
     }
 
     fn reset_for_new_day(&mut self, new_date: NaiveDate) {
@@ -377,6 +327,65 @@ impl App {
         self.current_date = new_date;
         self.selected_visible = 0;
         self.show_help = false;
+    }
+
+    fn current_file_tab(&self) -> Option<&TaskTab> {
+        self.selected_tab
+            .checked_sub(1)
+            .and_then(|index| self.tabs.get(index))
+    }
+
+    fn current_task_locations(&self) -> Vec<TaskLocation> {
+        if self.current_tab_is_all() {
+            return self
+                .tabs
+                .iter()
+                .enumerate()
+                .flat_map(|(tab_index, tab)| {
+                    (0..tab.tasks.len()).map(move |task_index| TaskLocation {
+                        tab_index,
+                        task_index,
+                    })
+                })
+                .collect();
+        }
+
+        self.selected_tab
+            .checked_sub(1)
+            .and_then(|tab_index| self.tabs.get(tab_index).map(|tab| (tab_index, tab)))
+            .map(|(tab_index, tab)| {
+                (0..tab.tasks.len())
+                    .map(|task_index| TaskLocation {
+                        tab_index,
+                        task_index,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    fn current_task_entries(&self) -> Vec<(usize, TaskLocation, &DailyTask)> {
+        self.current_task_locations()
+            .into_iter()
+            .enumerate()
+            .map(|(display_index, location)| (display_index, location, self.task_at(location)))
+            .collect()
+    }
+
+    fn selected_task_location(&self) -> Option<(usize, TaskLocation)> {
+        self.current_task_entries()
+            .into_iter()
+            .filter(|(_, _, task)| task.state.visible())
+            .nth(self.selected_visible)
+            .map(|(display_index, location, _)| (display_index, location))
+    }
+
+    fn task_at(&self, location: TaskLocation) -> &DailyTask {
+        &self.tabs[location.tab_index].tasks[location.task_index]
+    }
+
+    fn task_at_mut(&mut self, location: TaskLocation) -> &mut DailyTask {
+        &mut self.tabs[location.tab_index].tasks[location.task_index]
     }
 }
 

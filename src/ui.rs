@@ -136,7 +136,7 @@ fn draw_all_list(frame: &mut Frame, area: Rect, app: &App) {
 
 fn all_task_lines(app: &App) -> Vec<Line<'_>> {
     app.current_tasks()
-        .iter()
+        .into_iter()
         .map(|task| task_line(task, true))
         .collect()
 }
@@ -192,7 +192,7 @@ fn draw_tab_bar(frame: &mut Frame, area: Rect, app: &App) {
 
     let mut x = area.x.saturating_add(1);
     let area_right = area.x.saturating_add(area.width.saturating_sub(1));
-    for (index, tab) in app.tabs().iter().enumerate() {
+    for index in 0..app.display_tab_count() {
         if x >= area_right {
             break;
         }
@@ -211,7 +211,8 @@ fn draw_tab_bar(frame: &mut Frame, area: Rect, app: &App) {
         }
 
         let remaining_width = area_right - x;
-        let width = tab_width(tab.label.as_str()).min(remaining_width);
+        let label = app.display_tab_label(index).unwrap_or_default();
+        let width = tab_width(label).min(remaining_width);
         if width == 0 {
             break;
         }
@@ -221,7 +222,7 @@ fn draw_tab_bar(frame: &mut Frame, area: Rect, app: &App) {
         } else {
             fg_style(MONOKAI_COMMENT).bg(MONOKAI_BG)
         };
-        let label = clipped_tab_label(tab.label.as_str(), width);
+        let label = clipped_tab_label(label, width);
         let tab_area = Rect::new(x, area.y, width, 1);
         let tab_widget =
             Paragraph::new(Line::from(Span::styled(label, label_style))).style(label_style);

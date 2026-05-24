@@ -193,9 +193,13 @@ fn edit_tasks(
     app: &mut App,
     editors: &[String],
 ) -> Result<(), Box<dyn Error>> {
-    TerminalGuard::suspend()?;
-    let path = app.current_tab_path().to_path_buf();
+    let Some(path) = app.current_tab_path().map(Path::to_path_buf) else {
+        app.set_message("allタブは編集できません");
+        return Ok(());
+    };
     let label = app.current_tab_label().to_string();
+
+    TerminalGuard::suspend()?;
     let edit_result = open_with_configured_editor(&path, editors);
     TerminalGuard::resume()?;
     terminal.clear()?;
