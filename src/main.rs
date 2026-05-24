@@ -101,7 +101,10 @@ fn run_event_loop(
     logger: &logging::AppLogger,
 ) -> Result<(), Box<dyn Error>> {
     loop {
-        match event::read_next_event(&rx)? {
+        let app_event = event::read_next_event(&rx)?;
+        let should_persist = !matches!(&app_event, AppEvent::TerminalResized);
+
+        match app_event {
             AppEvent::Key(key) if keybindings.quit.matches(&key) => {
                 persist_tasks(app);
                 break;
@@ -144,8 +147,11 @@ fn run_event_loop(
                 }
                 log_task_changes(logger, app, &before, logging::TaskChangeCause::TaskFileRead);
             }
+            AppEvent::TerminalResized => {}
         }
-        persist_tasks(app);
+        if should_persist {
+            persist_tasks(app);
+        }
         terminal.draw(|frame| ui::draw(frame, app, keybindings))?;
     }
 

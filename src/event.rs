@@ -14,6 +14,7 @@ use crate::{clock, storage::KeyBindingsConfig};
 #[derive(Debug, Clone)]
 pub enum AppEvent {
     Key(KeyEvent),
+    TerminalResized,
     DayChanged,
     ConfigChanged,
     TasksChanged,
@@ -112,6 +113,7 @@ pub fn read_next_event(rx: &Receiver<AppEvent>) -> Result<AppEvent, String> {
 fn app_event_from_terminal_event(event: Event) -> Option<AppEvent> {
     match event {
         Event::Key(key) if key.kind == KeyEventKind::Press => Some(AppEvent::Key(key)),
+        Event::Resize(_, _) => Some(AppEvent::TerminalResized),
         _ => None,
     }
 }
@@ -303,11 +305,22 @@ mod tests {
 
         match app_event_from_terminal_event(Event::Key(key)) {
             Some(AppEvent::Key(received)) => assert_eq!(received, key),
-            Some(AppEvent::DayChanged | AppEvent::ConfigChanged | AppEvent::TasksChanged)
-            | None => {
-                panic!("expected key press event")
-            }
+            Some(
+                AppEvent::TerminalResized
+                | AppEvent::DayChanged
+                | AppEvent::ConfigChanged
+                | AppEvent::TasksChanged,
+            )
+            | None => panic!("expected key press event"),
         }
+    }
+
+    #[test]
+    fn terminal_resize_becomes_app_resize_event() {
+        assert!(matches!(
+            app_event_from_terminal_event(Event::Resize(80, 24)),
+            Some(AppEvent::TerminalResized)
+        ));
     }
 
     #[test]
