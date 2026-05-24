@@ -10,6 +10,7 @@ use ratatui::{
 use crate::{
     app::{App, DailyTask, TaskState, ViewMode},
     event::KeyBindings,
+    storage::APP_NAME,
 };
 
 const MONOKAI_BG: Color = Color::Rgb(39, 40, 34);
@@ -21,6 +22,8 @@ const MONOKAI_GREEN: Color = Color::Rgb(166, 226, 46);
 const MONOKAI_YELLOW: Color = Color::Rgb(230, 219, 116);
 const MONOKAI_ORANGE: Color = Color::Rgb(253, 151, 31);
 const MONOKAI_BLUE: Color = Color::Rgb(102, 217, 239);
+const TAB_SEPARATOR: &str = " | ";
+const TAB_SEPARATOR_WIDTH: u16 = 3;
 
 pub fn draw(frame: &mut Frame, app: &App, keybindings: &KeyBindings) {
     frame.render_widget(Block::default().style(base_style()), frame.area());
@@ -34,16 +37,17 @@ pub fn draw(frame: &mut Frame, app: &App, keybindings: &KeyBindings) {
         ])
         .split(frame.area());
 
-    let header = Paragraph::new(Line::from(vec![
-        Span::styled("cat-task-manager", emphasized_style(MONOKAI_PINK)),
-        Span::styled(format!("  {}", app.current_date), base_style()),
+    let header_spans = vec![
+        Span::styled(app.current_date.to_string(), base_style()),
         Span::styled(
             format!("  表示: {}", app.view_mode().label()),
             fg_style(MONOKAI_BLUE),
         ),
-    ]))
-    .style(base_style())
-    .block(themed_block("今日のタスク"));
+    ];
+
+    let header = Paragraph::new(Line::from(header_spans))
+        .style(base_style())
+        .block(themed_block(APP_NAME));
     frame.render_widget(header, chunks[0]);
 
     match app.view_mode() {
@@ -51,6 +55,8 @@ pub fn draw(frame: &mut Frame, app: &App, keybindings: &KeyBindings) {
         ViewMode::Incomplete => draw_incomplete_list(frame, chunks[1], app),
         ViewMode::All => draw_all_list(frame, chunks[1], app),
     }
+
+    draw_tab_bar(frame, chunks[1], app);
 
     draw_footer(frame, chunks[2], app);
 
@@ -63,12 +69,12 @@ fn draw_one_line(frame: &mut Frame, area: Rect, app: &App) {
     if let Some((_, task)) = app.selected_visible_task() {
         let task = Paragraph::new(task_line(task, false))
             .style(base_style())
-            .block(themed_block("現在のタスク"));
+            .block(task_block());
         frame.render_widget(task, area);
     } else {
         let empty = Paragraph::new("表示対象のタスクはありません")
             .style(base_style())
-            .block(themed_block("現在のタスク"));
+            .block(task_block());
         frame.render_widget(empty, area);
     }
 }
@@ -83,14 +89,14 @@ fn draw_incomplete_list(frame: &mut Frame, area: Rect, app: &App) {
     if items.is_empty() {
         let empty = Paragraph::new("表示対象のタスクはありません")
             .style(base_style())
-            .block(themed_block("未完了タスク"));
+            .block(task_block());
         frame.render_widget(empty, area);
     } else {
         let mut state = ListState::default();
         state.select(Some(app.selected_visible().min(items.len() - 1)));
         let list = List::new(items)
             .style(base_style())
-            .block(themed_block("未完了タスク"))
+            .block(task_block())
             .highlight_style(
                 Style::default()
                     .fg(MONOKAI_YELLOW)
@@ -109,14 +115,14 @@ fn draw_all_list(frame: &mut Frame, area: Rect, app: &App) {
     if items.is_empty() {
         let empty = Paragraph::new("タスクはありません")
             .style(base_style())
-            .block(themed_block("全体タスク"));
+            .block(task_block());
         frame.render_widget(empty, area);
     } else {
         let mut state = ListState::default();
         state.select(app.selected_task_index());
         let list = List::new(items)
             .style(base_style())
-            .block(themed_block("全体タスク"))
+            .block(task_block())
             .highlight_style(
                 Style::default()
                     .fg(MONOKAI_YELLOW)
@@ -129,7 +135,10 @@ fn draw_all_list(frame: &mut Frame, area: Rect, app: &App) {
 }
 
 fn all_task_lines(app: &App) -> Vec<Line<'_>> {
-    app.tasks.iter().map(|task| task_line(task, true)).collect()
+    app.current_tasks()
+        .iter()
+        .map(|task| task_line(task, true))
+        .collect()
 }
 
 fn draw_footer(frame: &mut Frame, area: Rect, app: &App) {
@@ -159,8 +168,10 @@ fn help_lines(keybindings: &KeyBindings) -> Vec<Line<'static>> {
         help_line(keybindings.previous.label(), "前のタスクへ移動"),
         help_line(keybindings.advance.label(), "開始/完了"),
         help_line(keybindings.hold.label(), "保留/再開"),
+        help_line(keybindings.next_tab.label(), "次のタブ"),
+        help_line(keybindings.previous_tab.label(), "前のタブ"),
         help_line(keybindings.toggle_view.label(), "表示切替"),
-        help_line(keybindings.edit.label(), "tasks.txt 編集"),
+        help_line(keybindings.edit.label(), "現在のタブのtxt編集"),
         help_line(keybindings.quit.label(), "終了"),
         help_line(keybindings.help.label(), "help 表示/閉じる"),
         help_line("esc", "help を閉じる"),
@@ -172,6 +183,69 @@ fn help_line(key: &str, description: &str) -> Line<'static> {
         Span::styled(format!("{key:<12}"), emphasized_style(MONOKAI_YELLOW)),
         Span::styled(description.to_string(), base_style()),
     ])
+}
+
+fn draw_tab_bar(frame: &mut Frame, area: Rect, app: &App) {
+    if area.width < 3 || area.height == 0 {
+        return;
+    }
+
+    let mut x = area.x.saturating_add(1);
+    let area_right = area.x.saturating_add(area.width.saturating_sub(1));
+    for (index, tab) in app.tabs().iter().enumerate() {
+        if x >= area_right {
+            break;
+        }
+
+        if index > 0 {
+            let remaining_width = area_right - x;
+            if remaining_width <= TAB_SEPARATOR_WIDTH {
+                break;
+            }
+
+            let separator_area = Rect::new(x, area.y, TAB_SEPARATOR_WIDTH, 1);
+            let separator =
+                Paragraph::new(TAB_SEPARATOR).style(fg_style(MONOKAI_COMMENT).bg(MONOKAI_BG));
+            frame.render_widget(separator, separator_area);
+            x = x.saturating_add(TAB_SEPARATOR_WIDTH);
+        }
+
+        let remaining_width = area_right - x;
+        let width = tab_width(tab.label.as_str()).min(remaining_width);
+        if width == 0 {
+            break;
+        }
+        let selected = index == app.selected_tab();
+        let label_style = if selected {
+            emphasized_style(MONOKAI_BG).bg(MONOKAI_YELLOW)
+        } else {
+            fg_style(MONOKAI_COMMENT).bg(MONOKAI_BG)
+        };
+        let label = clipped_tab_label(tab.label.as_str(), width);
+        let tab_area = Rect::new(x, area.y, width, 1);
+        let tab_widget =
+            Paragraph::new(Line::from(Span::styled(label, label_style))).style(label_style);
+
+        frame.render_widget(tab_widget, tab_area);
+        x = x.saturating_add(width);
+    }
+}
+
+fn tab_width(label: &str) -> u16 {
+    label.chars().count() as u16
+}
+
+fn clipped_tab_label(label: &str, width: u16) -> String {
+    let max_len = width as usize;
+    if label.chars().count() <= max_len {
+        return label.to_string();
+    }
+
+    label
+        .chars()
+        .take(max_len.saturating_sub(1))
+        .chain("~".chars())
+        .collect()
 }
 
 fn task_line(task: &DailyTask, show_completed_duration: bool) -> Line<'_> {
@@ -254,6 +328,13 @@ fn themed_block(title: &'static str) -> Block<'static> {
         )))
 }
 
+fn task_block() -> Block<'static> {
+    Block::default()
+        .borders(Borders::ALL)
+        .border_style(fg_style(MONOKAI_COMMENT))
+        .style(base_style())
+}
+
 fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
     let width = width.min(area.width);
     let height = height.min(area.height);
@@ -280,6 +361,7 @@ fn emphasized_style(color: Color) -> Style {
 #[cfg(test)]
 mod tests {
     use chrono::{DateTime, Local, NaiveDate};
+    use std::path::PathBuf;
 
     use super::*;
     use crate::storage::Task;
@@ -289,6 +371,14 @@ mod tests {
             name: name.to_string(),
             order,
             source_line,
+        }
+    }
+
+    fn task_list(label: &str, tasks: Vec<Task>) -> crate::app::TaskList {
+        crate::app::TaskList {
+            label: label.to_string(),
+            path: PathBuf::from(format!("{label}.txt")),
+            tasks,
         }
     }
 
@@ -308,12 +398,15 @@ mod tests {
     #[test]
     fn all_task_lines_include_completed_tasks_with_work_duration() {
         let mut app = App::new(
-            vec![task("done", 1, 1), task("next", 2, 2)],
+            vec![task_list(
+                "0730",
+                vec![task("done", 1, 1), task("next", 2, 2)],
+            )],
             NaiveDate::from_ymd_opt(2026, 5, 18).unwrap(),
         );
-        app.tasks[0].state = TaskState::Done;
-        app.tasks[0].started_at = Some(timestamp("2026-05-18T09:00:00+09:00"));
-        app.tasks[0].completed_at = Some(timestamp("2026-05-18T10:05:00+09:00"));
+        app.tabs[0].tasks[0].state = TaskState::Done;
+        app.tabs[0].tasks[0].started_at = Some(timestamp("2026-05-18T09:00:00+09:00"));
+        app.tabs[0].tasks[0].completed_at = Some(timestamp("2026-05-18T10:05:00+09:00"));
 
         let lines = all_task_lines(&app);
 

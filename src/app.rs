@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, Local, NaiveDate};
 use crossterm::event::{KeyCode, KeyEvent};
@@ -70,32 +70,38 @@ pub struct DailyTask {
     pub completed_at: Option<DateTime<Local>>,
 }
 
+#[derive(Debug, Clone)]
+pub struct TaskList {
+    pub label: String,
+    pub path: PathBuf,
+    pub tasks: Vec<Task>,
+}
+
+#[derive(Debug, Clone)]
+pub struct TaskTab {
+    pub label: String,
+    pub path: PathBuf,
+    pub tasks: Vec<DailyTask>,
+}
+
 #[derive(Debug)]
 pub struct App {
-    pub tasks: Vec<DailyTask>,
+    pub tabs: Vec<TaskTab>,
     pub current_date: NaiveDate,
     view_mode: ViewMode,
+    selected_tab: usize,
     selected_visible: usize,
     show_help: bool,
     message: String,
 }
 
 impl App {
-    pub fn new(tasks: Vec<Task>, current_date: NaiveDate) -> Self {
+    pub fn new(task_lists: Vec<TaskList>, current_date: NaiveDate) -> Self {
         Self {
-            tasks: tasks
-                .into_iter()
-                .map(|task| DailyTask {
-                    name: task.name,
-                    order: task.order,
-                    source_line: task.source_line,
-                    state: TaskState::NotStarted,
-                    started_at: None,
-                    completed_at: None,
-                })
-                .collect(),
+            tabs: task_lists.into_iter().map(task_tab_from_list).collect(),
             current_date,
             view_mode: ViewMode::OneLine,
+            selected_tab: 0,
             selected_visible: 0,
             show_help: false,
             message: "待機中".to_string(),
@@ -114,6 +120,10 @@ impl App {
             self.select_next();
         } else if keybindings.previous.matches(&key) {
             self.select_previous();
+        } else if keybindings.next_tab.matches(&key) {
+            self.select_next_tab();
+        } else if keybindings.previous_tab.matches(&key) {
+            self.select_previous_tab();
         } else if keybindings.advance.matches(&key) {
             self.advance_selected();
         } else if keybindings.hold.matches(&key) {
@@ -124,7 +134,7 @@ impl App {
     }
 
     pub fn visible_tasks(&self) -> Vec<(usize, &DailyTask)> {
-        self.tasks
+        self.current_tasks()
             .iter()
             .enumerate()
             .filter(|(_, task)| task.state.visible())
@@ -143,6 +153,30 @@ impl App {
         self.view_mode
     }
 
+    pub fn tabs(&self) -> &[TaskTab] {
+        &self.tabs
+    }
+
+    pub fn selected_tab(&self) -> usize {
+        self.selected_tab
+    }
+
+    pub fn current_tab(&self) -> &TaskTab {
+        &self.tabs[self.selected_tab]
+    }
+
+    pub fn current_tab_label(&self) -> &str {
+        &self.current_tab().label
+    }
+
+    pub fn current_tab_path(&self) -> &Path {
+        &self.current_tab().path
+    }
+
+    pub fn current_tasks(&self) -> &[DailyTask] {
+        &self.current_tab().tasks
+    }
+
     pub fn show_help(&self) -> bool {
         self.show_help
     }
@@ -155,23 +189,21 @@ impl App {
         self.message = message.into();
     }
 
-    pub fn replace_tasks(&mut self, tasks: Vec<Task>) {
-        self.tasks = tasks
-            .into_iter()
-            .map(|task| DailyTask {
-                name: task.name,
-                order: task.order,
-                source_line: task.source_line,
-                state: TaskState::NotStarted,
-                started_at: None,
-                completed_at: None,
-            })
-            .collect();
+    pub fn replace_tabs(&mut self, task_lists: Vec<TaskList>) {
+        let selected_path = self.tabs.get(self.selected_tab).map(|tab| tab.path.clone());
+        self.tabs = task_lists.into_iter().map(task_tab_from_list).collect();
+        self.selected_tab = selected_path
+            .and_then(|selected_path| self.tabs.iter().position(|tab| tab.path == selected_path))
+            .unwrap_or_else(|| self.selected_tab.min(self.tabs.len().saturating_sub(1)));
         self.clamp_selection();
     }
 
-    pub fn apply_statuses(&mut self, statuses: &[TaskStatus]) {
-        for (task, status) in self.tasks.iter_mut().zip(statuses) {
+    pub fn apply_statuses(&mut self, tab_index: usize, statuses: &[TaskStatus]) {
+        let Some(tab) = self.tabs.get_mut(tab_index) else {
+            return;
+        };
+
+        for (task, status) in tab.tasks.iter_mut().zip(statuses) {
             task.state = status.state.clone();
             task.started_at = status.started_at;
             task.completed_at = status.completed_at;
@@ -180,7 +212,7 @@ impl App {
     }
 
     pub fn complete_day(&mut self, records_dir: impl AsRef<Path>, new_date: NaiveDate) {
-        match storage::write_day_record(records_dir, self.current_date, &self.tasks) {
+        match storage::write_day_record(records_dir, self.current_date, &self.tabs) {
             Ok(path) => {
                 self.reset_for_new_day(new_date);
                 self.message = format!("記録を書き出しました: {}", path.display());
@@ -204,32 +236,61 @@ impl App {
         self.selected_visible = self.selected_visible.saturating_sub(1);
     }
 
+    fn select_next_tab(&mut self) {
+        if self.tabs.is_empty() {
+            self.selected_tab = 0;
+            self.selected_visible = 0;
+            return;
+        }
+
+        self.selected_tab = (self.selected_tab + 1) % self.tabs.len();
+        self.selected_visible = 0;
+        self.message = format!("タブ: {}", self.current_tab_label());
+    }
+
+    fn select_previous_tab(&mut self) {
+        if self.tabs.is_empty() {
+            self.selected_tab = 0;
+            self.selected_visible = 0;
+            return;
+        }
+
+        self.selected_tab = self
+            .selected_tab
+            .checked_sub(1)
+            .unwrap_or_else(|| self.tabs.len() - 1);
+        self.selected_visible = 0;
+        self.message = format!("タブ: {}", self.current_tab_label());
+    }
+
     fn advance_selected(&mut self) {
         let Some(index) = self.selected_task_index() else {
             self.message = "表示対象のタスクがありません".to_string();
             return;
         };
 
-        match self.tasks[index].state {
+        match self.current_tasks()[index].state {
             TaskState::NotStarted => {
                 if self.previous_task_is_done(index) {
                     let now = Local::now();
-                    self.tasks[index].state = TaskState::InProgress;
-                    self.tasks[index].started_at = Some(now);
-                    self.tasks[index].completed_at = None;
-                    self.message = format!("開始しました: {}", self.tasks[index].name);
+                    let task = &mut self.tabs[self.selected_tab].tasks[index];
+                    task.state = TaskState::InProgress;
+                    task.started_at = Some(now);
+                    task.completed_at = None;
+                    self.message = format!("開始しました: {}", task.name);
                 } else {
                     self.message = "前のタスクが完了していません".to_string();
                 }
             }
             TaskState::InProgress => {
                 let now = Local::now();
-                self.tasks[index].state = TaskState::Done;
-                if self.tasks[index].started_at.is_none() {
-                    self.tasks[index].started_at = Some(now);
+                let task = &mut self.tabs[self.selected_tab].tasks[index];
+                task.state = TaskState::Done;
+                if task.started_at.is_none() {
+                    task.started_at = Some(now);
                 }
-                self.tasks[index].completed_at = Some(now);
-                self.message = format!("完了しました: {}", self.tasks[index].name);
+                task.completed_at = Some(now);
+                self.message = format!("完了しました: {}", task.name);
                 self.clamp_selection();
             }
             TaskState::OnHold => {
@@ -245,14 +306,15 @@ impl App {
             return;
         };
 
-        match self.tasks[index].state {
+        let task = &mut self.tabs[self.selected_tab].tasks[index];
+        match task.state {
             TaskState::InProgress => {
-                self.tasks[index].state = TaskState::OnHold;
-                self.message = format!("保留しました: {}", self.tasks[index].name);
+                task.state = TaskState::OnHold;
+                self.message = format!("保留しました: {}", task.name);
             }
             TaskState::OnHold => {
-                self.tasks[index].state = TaskState::InProgress;
-                self.message = format!("再開しました: {}", self.tasks[index].name);
+                task.state = TaskState::InProgress;
+                self.message = format!("再開しました: {}", task.name);
             }
             _ => {
                 self.message = "保留できるのは実施中のタスクだけです".to_string();
@@ -285,7 +347,7 @@ impl App {
     }
 
     fn visible_count(&self) -> usize {
-        self.tasks
+        self.current_tasks()
             .iter()
             .filter(|task| task.state.visible())
             .count()
@@ -301,18 +363,39 @@ impl App {
     }
 
     fn previous_task_is_done(&self, index: usize) -> bool {
-        index == 0 || self.tasks[index - 1].state == TaskState::Done
+        index == 0 || self.current_tasks()[index - 1].state == TaskState::Done
     }
 
     fn reset_for_new_day(&mut self, new_date: NaiveDate) {
-        for task in &mut self.tasks {
-            task.state = TaskState::NotStarted;
-            task.started_at = None;
-            task.completed_at = None;
+        for tab in &mut self.tabs {
+            for task in &mut tab.tasks {
+                task.state = TaskState::NotStarted;
+                task.started_at = None;
+                task.completed_at = None;
+            }
         }
         self.current_date = new_date;
         self.selected_visible = 0;
         self.show_help = false;
+    }
+}
+
+fn task_tab_from_list(task_list: TaskList) -> TaskTab {
+    TaskTab {
+        label: task_list.label,
+        path: task_list.path,
+        tasks: task_list
+            .tasks
+            .into_iter()
+            .map(|task| DailyTask {
+                name: task.name,
+                order: task.order,
+                source_line: task.source_line,
+                state: TaskState::NotStarted,
+                started_at: None,
+                completed_at: None,
+            })
+            .collect(),
     }
 }
 

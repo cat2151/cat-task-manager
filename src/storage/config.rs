@@ -3,15 +3,30 @@ use std::{collections::HashSet, fs, path::Path};
 use serde::Deserialize;
 
 const DEFAULT_EDITORS: [&str; 4] = ["fresh", "zed", "nvim", "code"];
+const DEFAULT_KEYBINDINGS: [(&str, &str); 6] = [
+    ("edit", "e"),
+    ("hold", "p"),
+    ("next_tab", "l"),
+    ("previous_tab", "h"),
+    ("toggle_view", "v"),
+    ("help", "?"),
+];
+const OLD_DEFAULT_KEYBINDINGS: [(&str, &str, &str); 3] = [
+    ("hold", "h", "p"),
+    ("next_tab", "tab", "l"),
+    ("previous_tab", "backtab", "h"),
+];
 const DEFAULT_CONFIG: &str = r#"editors = ["fresh", "zed", "nvim", "code"]
 
 [keybindings]
 next = "j"
 previous = "k"
 advance = "enter"
-hold = "h"
+hold = "p"
 quit = "q"
 edit = "e"
+next_tab = "l"
+previous_tab = "h"
 toggle_view = "v"
 help = "?"
 "#;
@@ -25,6 +40,8 @@ pub struct KeyBindingsConfig {
     pub hold: Option<String>,
     pub quit: Option<String>,
     pub edit: Option<String>,
+    pub next_tab: Option<String>,
+    pub previous_tab: Option<String>,
     pub toggle_view: Option<String>,
     pub help: Option<String>,
 }
@@ -107,22 +124,73 @@ fn default_editors() -> Vec<String> {
 fn ensure_config_defaults(path: &Path) -> Result<(), String> {
     let raw = fs::read_to_string(path)
         .map_err(|err| format!("config fileを読めませんでした: {} ({err})", path.display()))?;
-    let value: toml::Value = toml::from_str(&raw).map_err(|err| {
+    let mut value: toml::Value = toml::from_str(&raw).map_err(|err| {
         format!(
             "config fileをTOMLとして読めませんでした: {} ({err})",
             path.display()
         )
     })?;
 
-    let needs_editors = !matches!(value.get("editors"), Some(toml::Value::Array(_)));
-    let keybindings = value.get("keybindings").and_then(toml::Value::as_table);
-    let missing_keybindings = [("edit", "e"), ("toggle_view", "v"), ("help", "?")]
-        .into_iter()
-        .filter(|(key, _)| keybindings.is_none_or(|table| !table.contains_key(*key)))
-        .collect::<Vec<_>>();
+    let mut changed = false;
+    let table = value
+        .as_table_mut()
+        .ok_or_else(|| format!("config fileのrootがtableではありません: {}", path.display()))?;
 
-    if needs_editors || !missing_keybindings.is_empty() {
-        let updated = apply_config_defaults(&raw, needs_editors, &missing_keybindings);
+    if !matches!(table.get("editors"), Some(toml::Value::Array(_))) {
+        table.insert(
+            "editors".to_string(),
+            toml::Value::Array(
+                default_editors()
+                    .into_iter()
+                    .map(toml::Value::String)
+                    .collect(),
+            ),
+        );
+        changed = true;
+    }
+
+    if !table.contains_key("keybindings") {
+        table.insert(
+            "keybindings".to_string(),
+            toml::Value::Table(toml::Table::new()),
+        );
+        changed = true;
+    }
+
+    let keybindings = table
+        .get_mut("keybindings")
+        .and_then(toml::Value::as_table_mut)
+        .ok_or_else(|| {
+            format!(
+                "config fileのkeybindingsがtableではありません: {}",
+                path.display()
+            )
+        })?;
+
+    for (key, default) in DEFAULT_KEYBINDINGS {
+        if !keybindings.contains_key(key) {
+            keybindings.insert(key.to_string(), toml::Value::String(default.to_string()));
+            changed = true;
+        }
+    }
+
+    for (key, old_default, new_default) in OLD_DEFAULT_KEYBINDINGS {
+        if keybindings.get(key).and_then(toml::Value::as_str) == Some(old_default) {
+            keybindings.insert(
+                key.to_string(),
+                toml::Value::String(new_default.to_string()),
+            );
+            changed = true;
+        }
+    }
+
+    if changed {
+        let updated = toml::to_string_pretty(&value).map_err(|err| {
+            format!(
+                "config fileをTOMLとして書き出せませんでした: {} ({err})",
+                path.display()
+            )
+        })?;
         fs::write(path, updated).map_err(|err| {
             format!(
                 "config fileを書き込めませんでした: {} ({err})",
@@ -134,62 +202,32 @@ fn ensure_config_defaults(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn apply_config_defaults(
-    raw: &str,
-    needs_editors: bool,
-    missing_keybindings: &[(&str, &str)],
-) -> String {
-    let mut updated = raw.to_string();
-
-    if !missing_keybindings.is_empty() {
-        updated = insert_keybindings(&updated, missing_keybindings);
-    }
-    if needs_editors {
-        updated = format!(
-            "editors = [\"fresh\", \"zed\", \"nvim\", \"code\"]\n\n{}",
-            updated
-        );
-    }
-    if !updated.ends_with('\n') {
-        updated.push('\n');
-    }
-
-    updated
-}
-
-fn insert_keybindings(raw: &str, keybindings: &[(&str, &str)]) -> String {
-    let lines = raw.lines().collect::<Vec<_>>();
-    if let Some(index) = lines.iter().position(|line| line.trim() == "[keybindings]") {
-        let mut output = String::new();
-        for (line_index, line) in lines.iter().enumerate() {
-            output.push_str(line);
-            output.push('\n');
-            if line_index == index {
-                for (key, value) in keybindings {
-                    output.push_str(&format!("{key} = \"{value}\"\n"));
-                }
-            }
-        }
-        output
-    } else {
-        let mut output = raw.to_string();
-        if !output.ends_with('\n') {
-            output.push('\n');
-        }
-        if !output.ends_with("\n\n") {
-            output.push('\n');
-        }
-        output.push_str("[keybindings]\n");
-        for (key, value) in keybindings {
-            output.push_str(&format!("{key} = \"{value}\"\n"));
-        }
-        output
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::{
+        path::PathBuf,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    fn temp_config_path(test_name: &str) -> PathBuf {
+        let suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!("cat-task-manager-{test_name}-{suffix}.toml"))
+    }
+
+    fn keybinding(path: &Path, key: &str) -> String {
+        let raw = fs::read_to_string(path).unwrap();
+        let value: toml::Value = toml::from_str(&raw).unwrap();
+        value
+            .get("keybindings")
+            .and_then(|table| table.get(key))
+            .and_then(toml::Value::as_str)
+            .unwrap()
+            .to_string()
+    }
 
     #[test]
     fn normalize_editors_uses_default_when_empty() {
@@ -214,31 +252,52 @@ mod tests {
 
     #[test]
     fn config_defaults_are_inserted_into_keybindings_table() {
-        let raw = "editors = [\"nvim\"]\n\n[keybindings]\nnext = \"j\"\n";
-        let updated = apply_config_defaults(
-            raw,
-            false,
-            &[("edit", "e"), ("toggle_view", "v"), ("help", "?")],
-        );
+        let path = temp_config_path("insert-keybindings");
+        fs::write(
+            &path,
+            "editors = [\"nvim\"]\n\n[keybindings]\nnext = \"j\"\n",
+        )
+        .unwrap();
 
-        assert!(updated.contains(
-            "[keybindings]\nedit = \"e\"\ntoggle_view = \"v\"\nhelp = \"?\"\nnext = \"j\""
-        ));
+        ensure_config_defaults(&path).unwrap();
+
+        assert_eq!(keybinding(&path, "next"), "j");
+        assert_eq!(keybinding(&path, "hold"), "p");
+        assert_eq!(keybinding(&path, "next_tab"), "l");
+        assert_eq!(keybinding(&path, "previous_tab"), "h");
+
+        fs::remove_file(path).unwrap();
     }
 
     #[test]
     fn config_defaults_add_keybindings_table() {
-        let raw = "editors = [\"nvim\"]\n";
-        let updated = apply_config_defaults(raw, false, &[("help", "?")]);
-        let value: toml::Value = toml::from_str(&updated).unwrap();
+        let path = temp_config_path("add-keybindings");
+        fs::write(&path, "editors = [\"nvim\"]\n").unwrap();
 
-        assert_eq!(
-            value
-                .get("keybindings")
-                .and_then(|table| table.get("help"))
-                .and_then(toml::Value::as_str),
-            Some("?")
-        );
+        ensure_config_defaults(&path).unwrap();
+
+        assert_eq!(keybinding(&path, "help"), "?");
+        assert_eq!(keybinding(&path, "next_tab"), "l");
+
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn old_default_tab_keys_are_migrated_to_h_l() {
+        let path = temp_config_path("migrate-tab-keys");
+        fs::write(
+            &path,
+            "editors = [\"nvim\"]\n\n[keybindings]\nhold = \"h\"\nnext_tab = \"tab\"\nprevious_tab = \"backtab\"\n",
+        )
+        .unwrap();
+
+        ensure_config_defaults(&path).unwrap();
+
+        assert_eq!(keybinding(&path, "hold"), "p");
+        assert_eq!(keybinding(&path, "next_tab"), "l");
+        assert_eq!(keybinding(&path, "previous_tab"), "h");
+
+        fs::remove_file(path).unwrap();
     }
 
     #[test]
@@ -246,6 +305,9 @@ mod tests {
         let file: RawConfigFile = toml::from_str(DEFAULT_CONFIG).unwrap();
 
         assert_eq!(file.editors, default_editors());
+        assert_eq!(file.keybindings.hold.as_deref(), Some("p"));
+        assert_eq!(file.keybindings.next_tab.as_deref(), Some("l"));
+        assert_eq!(file.keybindings.previous_tab.as_deref(), Some("h"));
     }
 
     #[test]

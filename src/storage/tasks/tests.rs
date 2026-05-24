@@ -16,6 +16,17 @@ fn temp_tasks_path(test_name: &str) -> PathBuf {
     ))
 }
 
+fn temp_tasks_dir(test_name: &str) -> PathBuf {
+    let suffix = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    std::env::temp_dir().join(format!(
+        "cat-task-manager-{test_name}-{}-{suffix}",
+        std::process::id()
+    ))
+}
+
 fn daily_task(name: &str, order: u32, source_line: u32, state: TaskState) -> DailyTask {
     let completed_time = matches!(state, TaskState::Done).then(timestamp);
     DailyTask {
@@ -209,6 +220,41 @@ fn load_task_file_reads_markdown_tasks_without_status_json() {
     assert!(loaded.status.is_none());
 
     fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn load_task_files_reads_txt_files_as_sorted_tabs() {
+    let dir = temp_tasks_dir("task-tabs");
+    fs::create_dir(&dir).unwrap();
+    fs::write(dir.join("tasks.txt"), "- [ ] later\n").unwrap();
+    fs::write(dir.join("0730.txt"), "- [ ] morning\n").unwrap();
+    fs::write(dir.join("notes.md"), "- [ ] ignored\n").unwrap();
+
+    let loaded = load_task_files(&dir).unwrap();
+
+    assert_eq!(
+        loaded
+            .iter()
+            .map(|file| file.label.as_str())
+            .collect::<Vec<_>>(),
+        vec!["0730", "tasks"]
+    );
+    assert_eq!(loaded[0].task[0].name, "morning");
+    assert_eq!(loaded[1].task[0].name, "later");
+
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn ensure_tasks_dir_creates_default_tasks_file() {
+    let dir = temp_tasks_dir("ensure-task-tabs");
+
+    ensure_tasks_dir(&dir).unwrap();
+
+    let raw = fs::read_to_string(dir.join("tasks.txt")).unwrap();
+    assert!(raw.contains("- [ ] Morning routine"));
+
+    fs::remove_dir_all(dir).unwrap();
 }
 
 #[test]

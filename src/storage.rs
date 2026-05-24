@@ -10,7 +10,9 @@ mod tasks;
 pub use config::{load_config_file, KeyBindingsConfig};
 pub use paths::{app_paths, ensure_app_storage, AppPaths};
 pub use records::write_day_record;
-pub use tasks::{load_task_file, write_task_file_status, Task, TaskFileStatus, TaskStatus};
+pub use tasks::{
+    load_task_files, write_task_file_status, Task, TaskFile, TaskFileStatus, TaskStatus,
+};
 
 impl TaskState {
     pub fn record_value(&self) -> &'static str {

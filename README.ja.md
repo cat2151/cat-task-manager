@@ -90,10 +90,12 @@ editors = ["fresh", "zed", "nvim", "code"]
 next = "j"
 previous = "k"
 advance = "enter"
-hold = "h"
-edit = "e"
-toggle_view = "v"
+hold = "p"
 quit = "q"
+edit = "e"
+next_tab = "l"
+previous_tab = "h"
+toggle_view = "v"
 help = "?"
 ```
 

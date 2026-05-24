@@ -16,7 +16,7 @@ mod self_update;
 mod storage;
 mod ui;
 
-use app::{App, DailyTask};
+use app::{App, DailyTask, TaskList, TaskTab};
 use event::AppEvent;
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -56,23 +56,26 @@ fn run_app() -> Result<(), Box<dyn Error>> {
     let config_file = storage::load_config_file(&paths.config_path)?;
     let mut keybindings = event::KeyBindings::from_config(config_file.keybindings)?;
     let mut editors = config_file.editors;
-    let task_file = storage::load_task_file(&paths.tasks_path)?;
-    let mut app = App::new(task_file.task, clock::today_jst());
-    let before_task_file_read = logging::task_snapshots(&app.tasks);
-    let state_outcome = reflect_task_file_status(task_file.status, &mut app, true);
-    logger.log_task_file_status_read(&paths.tasks_path, state_outcome)?;
+    let task_files = storage::load_task_files(&paths.tasks_dir)?;
+    let mut app = App::new(task_lists_from_files(&task_files), clock::today_jst());
+    let before_task_file_read = logging::task_snapshots(app.tabs());
+    for (index, task_file) in task_files.iter().enumerate() {
+        let state_outcome =
+            reflect_task_file_status(task_file.status.clone(), &mut app, index, true);
+        logger.log_task_file_status_read(&task_file.path, state_outcome)?;
+    }
     logger.log_task_changes(
         &before_task_file_read,
-        &app.tasks,
+        app.tabs(),
         logging::TaskChangeCause::TaskFileRead,
     )?;
-    storage::write_task_file_status(&paths.tasks_path, app.current_date, &app.tasks)?;
+    persist_tasks(&mut app);
 
     let _terminal_guard = TerminalGuard::enter()?;
     let mut terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
 
     let (tx, rx) = mpsc::channel();
-    event::spawn_event_threads(tx, paths.config_path.clone(), paths.tasks_path.clone());
+    event::spawn_event_threads(tx, paths.config_path.clone(), paths.tasks_dir.clone());
 
     terminal.draw(|frame| ui::draw(frame, &app, &keybindings))?;
     run_event_loop(
@@ -100,17 +103,17 @@ fn run_event_loop(
     loop {
         match event::read_next_event(&rx)? {
             AppEvent::Key(key) if keybindings.quit.matches(&key) => {
-                persist_tasks(paths, app);
+                persist_tasks(app);
                 break;
             }
             AppEvent::Key(key) if keybindings.edit.matches(&key) => {
-                let before = logging::task_snapshots(&app.tasks);
+                let before = logging::task_snapshots(app.tabs());
                 edit_tasks(paths, terminal, app, editors)?;
                 log_task_changes(logger, app, &before, logging::TaskChangeCause::TaskFileRead);
             }
             AppEvent::Key(key) => match reload_tasks(paths, app) {
                 Ok(()) => {
-                    let before = logging::task_snapshots(&app.tasks);
+                    let before = logging::task_snapshots(app.tabs());
                     let cause = key_change_cause(&key, keybindings);
                     app.handle_key(key, keybindings);
                     log_task_changes(logger, app, &before, cause);
@@ -119,7 +122,7 @@ fn run_event_loop(
             },
             AppEvent::DayChanged => match reload_tasks(paths, app) {
                 Ok(()) => {
-                    let before = logging::task_snapshots(&app.tasks);
+                    let before = logging::task_snapshots(app.tabs());
                     app.complete_day(&paths.records_dir, clock::today_jst());
                     log_task_changes(logger, app, &before, logging::TaskChangeCause::DayChanged);
                 }
@@ -130,11 +133,11 @@ fn run_event_loop(
                 Err(err) => app.set_message(err),
             },
             AppEvent::TasksChanged => {
-                let before_tasks = app.tasks.clone();
-                let before = logging::task_snapshots(&app.tasks);
+                let before_tabs = app.tabs().to_vec();
+                let before = logging::task_snapshots(app.tabs());
                 match reload_tasks(paths, app) {
-                    Ok(()) if tasks_differ(&before_tasks, &app.tasks) => {
-                        app.set_message("tasks.txtをhot reloadしました");
+                    Ok(()) if tabs_differ(&before_tabs, app.tabs()) => {
+                        app.set_message("tasks/をhot reloadしました");
                     }
                     Ok(()) => {}
                     Err(err) => app.set_message(err),
@@ -142,7 +145,7 @@ fn run_event_loop(
                 log_task_changes(logger, app, &before, logging::TaskChangeCause::TaskFileRead);
             }
         }
-        persist_tasks(paths, app);
+        persist_tasks(app);
         terminal.draw(|frame| ui::draw(frame, app, keybindings))?;
     }
 
@@ -152,18 +155,19 @@ fn run_event_loop(
 fn reflect_task_file_status(
     status: Option<storage::TaskFileStatus>,
     app: &mut App,
+    tab_index: usize,
     update_message: bool,
 ) -> logging::TaskFileStatusReadOutcome {
     if let Some(status) = status {
         if status.date == app.current_date {
-            app.apply_statuses(&status.states);
+            app.apply_statuses(tab_index, &status.states);
             if update_message {
-                app.set_message("tasks.txtの状態を読み込みました");
+                app.set_message("task fileの状態を読み込みました");
             }
             logging::TaskFileStatusReadOutcome::Loaded
         } else {
             if update_message {
-                app.set_message("tasks.txtの状態日付が今日ではないため未着手で表示します");
+                app.set_message("task fileの状態日付が今日ではないため未着手で表示します");
             }
             logging::TaskFileStatusReadOutcome::DateMismatch {
                 status_date: status.date,
@@ -174,10 +178,11 @@ fn reflect_task_file_status(
     }
 }
 
-fn persist_tasks(paths: &storage::AppPaths, app: &mut App) {
-    if let Err(err) =
-        storage::write_task_file_status(&paths.tasks_path, app.current_date, &app.tasks)
-    {
+fn persist_tasks(app: &mut App) {
+    let result = app.tabs().iter().try_for_each(|tab| {
+        storage::write_task_file_status(&tab.path, app.current_date, &tab.tasks)
+    });
+    if let Err(err) = result {
         app.set_message(err);
     }
 }
@@ -189,13 +194,15 @@ fn edit_tasks(
     editors: &[String],
 ) -> Result<(), Box<dyn Error>> {
     TerminalGuard::suspend()?;
-    let edit_result = open_with_configured_editor(&paths.tasks_path, editors);
+    let path = app.current_tab_path().to_path_buf();
+    let label = app.current_tab_label().to_string();
+    let edit_result = open_with_configured_editor(&path, editors);
     TerminalGuard::resume()?;
     terminal.clear()?;
 
     match edit_result {
         Ok(editor) => match reload_tasks(paths, app) {
-            Ok(()) => app.set_message(format!("tasks.txtを編集しました: {editor}")),
+            Ok(()) => app.set_message(format!("{label}.txtを編集しました: {editor}")),
             Err(err) => app.set_message(err),
         },
         Err(err) => app.set_message(err),
@@ -220,10 +227,12 @@ fn reload_config(
 
 fn reload_tasks(paths: &storage::AppPaths, app: &mut App) -> Result<(), String> {
     storage::ensure_app_storage(paths)?;
-    let task_file = storage::load_task_file(&paths.tasks_path)?;
+    let task_files = storage::load_task_files(&paths.tasks_dir)?;
 
-    app.replace_tasks(task_file.task);
-    reflect_task_file_status(task_file.status, app, false);
+    app.replace_tabs(task_lists_from_files(&task_files));
+    for (index, task_file) in task_files.into_iter().enumerate() {
+        reflect_task_file_status(task_file.status, app, index, false);
+    }
 
     Ok(())
 }
@@ -273,9 +282,29 @@ fn log_task_changes(
     before: &[logging::TaskSnapshot],
     cause: logging::TaskChangeCause,
 ) {
-    if let Err(err) = logger.log_task_changes(before, &app.tasks, cause) {
+    if let Err(err) = logger.log_task_changes(before, app.tabs(), cause) {
         app.set_message(err);
     }
+}
+
+fn task_lists_from_files(task_files: &[storage::TaskFile]) -> Vec<TaskList> {
+    task_files
+        .iter()
+        .map(|task_file| TaskList {
+            label: task_file.label.clone(),
+            path: task_file.path.clone(),
+            tasks: task_file.task.clone(),
+        })
+        .collect()
+}
+
+fn tabs_differ(before: &[TaskTab], after: &[TaskTab]) -> bool {
+    before.len() != after.len()
+        || before.iter().zip(after).any(|(before, after)| {
+            before.label != after.label
+                || before.path != after.path
+                || tasks_differ(&before.tasks, &after.tasks)
+        })
 }
 
 fn tasks_differ(before: &[DailyTask], after: &[DailyTask]) -> bool {

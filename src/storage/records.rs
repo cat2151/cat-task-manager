@@ -6,7 +6,10 @@ use std::{
 use chrono::NaiveDate;
 use serde::Serialize;
 
-use crate::{app::DailyTask, clock};
+use crate::{
+    app::{DailyTask, TaskTab},
+    clock,
+};
 
 #[derive(Debug, Serialize)]
 struct DayRecord<'a> {
@@ -16,6 +19,7 @@ struct DayRecord<'a> {
 
 #[derive(Debug, Serialize)]
 struct RecordTask<'a> {
+    tab: &'a str,
     line: u32,
     name: &'a str,
     order: u32,
@@ -29,7 +33,7 @@ struct RecordTask<'a> {
 pub fn write_day_record(
     records_dir: impl AsRef<Path>,
     date: NaiveDate,
-    tasks: &[DailyTask],
+    tabs: &[TaskTab],
 ) -> Result<PathBuf, String> {
     let records_dir = records_dir.as_ref();
     fs::create_dir_all(records_dir).map_err(|err| {
@@ -42,16 +46,9 @@ pub fn write_day_record(
     let path = records_dir.join(format!("{date}.toml"));
     let record = DayRecord {
         date: date.to_string(),
-        tasks: tasks
+        tasks: tabs
             .iter()
-            .map(|task| RecordTask {
-                line: task.source_line,
-                name: &task.name,
-                order: task.order,
-                final_state: task.state.on_day_changed().record_value(),
-                started_at: task.started_at.as_ref().map(clock::format_rfc3339_jst),
-                completed_at: task.completed_at.as_ref().map(clock::format_rfc3339_jst),
-            })
+            .flat_map(|tab| record_tasks(tab.label.as_str(), &tab.tasks))
             .collect(),
     };
 
@@ -68,6 +65,21 @@ pub fn write_day_record(
         )
     })?;
     Ok(path)
+}
+
+fn record_tasks<'a>(tab: &'a str, tasks: &'a [DailyTask]) -> Vec<RecordTask<'a>> {
+    tasks
+        .iter()
+        .map(|task| RecordTask {
+            tab,
+            line: task.source_line,
+            name: &task.name,
+            order: task.order,
+            final_state: task.state.on_day_changed().record_value(),
+            started_at: task.started_at.as_ref().map(clock::format_rfc3339_jst),
+            completed_at: task.completed_at.as_ref().map(clock::format_rfc3339_jst),
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -101,10 +113,16 @@ mod tests {
             started_at: Some(time),
             completed_at: Some(time),
         };
+        let tab = TaskTab {
+            label: "0730".to_string(),
+            path: records_dir.join("0730.txt"),
+            tasks: vec![task],
+        };
 
-        let path = write_day_record(&records_dir, date, &[task]).unwrap();
+        let path = write_day_record(&records_dir, date, &[tab]).unwrap();
 
         let raw = fs::read_to_string(&path).unwrap();
+        assert!(raw.contains("tab = \"0730\""));
         assert!(raw.contains("started_at = \"2026-05-18T09:12:00+09:00\""));
         assert!(raw.contains("completed_at = \"2026-05-18T09:12:00+09:00\""));
         assert!(!raw.contains("+00:00"));

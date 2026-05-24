@@ -66,7 +66,7 @@ pub(super) fn parse_task_file_content(
                 let name = task_line.name.trim();
                 if name.is_empty() {
                     return Err(
-                        "tasks.txt のチェックボックスの後にタスク名を書いてください".to_string()
+                        "task file のチェックボックスの後にタスク名を書いてください".to_string()
                     );
                 }
 
@@ -80,7 +80,7 @@ pub(super) fn parse_task_file_content(
             }
             TaskLineKind::Ignored => {
                 if line_parts.status.is_some() {
-                    return Err("tasks.txt の行末JSONの前にタスクを書いてください".to_string());
+                    return Err("task file の行末JSONの前にタスクを書いてください".to_string());
                 }
             }
             TaskLineKind::Invalid => return Err(invalid_task_line_message(index + 1)),
@@ -143,7 +143,7 @@ fn split_task_line_with_detected_at(
     }
 
     if saw_json_candidate {
-        return Err("tasks.txt の行末JSONが不正です。修正するか削除してください".to_string());
+        return Err("task file の行末JSONが不正です。修正するか削除してください".to_string());
     }
 
     Ok(TaskLineParts {
@@ -154,7 +154,7 @@ fn split_task_line_with_detected_at(
 }
 
 pub(super) fn invalid_task_line_message(line_number: usize) -> String {
-    format!("tasks.txt のタスク行は '- [ ] ' または '- [x] ' で始めてください: line {line_number}")
+    format!("task file のタスク行は '- [ ] ' または '- [x] ' で始めてください: line {line_number}")
 }
 
 fn parse_task_line_kind(line: &str, detected_at: DateTime<Local>) -> TaskLineKind<'_> {
@@ -204,7 +204,7 @@ fn is_supplemental_list_item(task_text: &str) -> bool {
 fn parse_line_status(raw_status: RawLineStatus) -> Result<LineStatus, String> {
     let date = NaiveDate::parse_from_str(&raw_status.date, "%Y-%m-%d").map_err(|err| {
         format!(
-            "tasks.txt 行末JSONの日付を読めませんでした: '{}' ({err})",
+            "task file 行末JSONの日付を読めませんでした: '{}' ({err})",
             raw_status.date
         )
     })?;
@@ -241,7 +241,7 @@ fn parse_optional_time(
             DateTime::parse_from_rfc3339(value)
                 .map(|value| value.with_timezone(&Local))
                 .map_err(|err| {
-                    format!("tasks.txt 行末JSONの{field_name}を読めませんでした: '{value}' ({err})")
+                    format!("task file 行末JSONの{field_name}を読めませんでした: '{value}' ({err})")
                 })
         })
         .transpose()
@@ -263,7 +263,7 @@ fn build_task_file_status(
             match line_status {
                 Some(line_status) => {
                     if line_status.date != date {
-                        return Err("tasks.txt の行末JSONの日付が行ごとに異なります".to_string());
+                        return Err("task file の行末JSONの日付が行ごとに異なります".to_string());
                     }
                     states.push(resolve_task_status(
                         Some(line_status.task_status),

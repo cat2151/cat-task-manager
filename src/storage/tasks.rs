@@ -1,4 +1,7 @@
-use std::{fs, path::Path};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
 use chrono::{DateTime, Local, NaiveDate};
 use serde::Serialize;
@@ -13,6 +16,7 @@ mod parser;
 use parser::{invalid_task_line_message, parse_task_file_content, split_task_line, TaskLineKind};
 
 const DEFAULT_TASKS: &str = "- [ ] Morning routine\n- [ ] Check mail\n- [ ] Code review\n";
+const DEFAULT_TASKS_FILE_NAME: &str = "tasks.txt";
 
 #[derive(Debug, Clone)]
 pub struct Task {
@@ -23,6 +27,8 @@ pub struct Task {
 
 #[derive(Debug, Clone)]
 pub struct TaskFile {
+    pub label: String,
+    pub path: PathBuf,
     pub task: Vec<Task>,
     pub status: Option<TaskFileStatus>,
 }
@@ -50,9 +56,17 @@ struct LineStatusRecord<'a> {
     completed_at: Option<&'a str>,
 }
 
-pub(super) fn ensure_tasks_file(path: &Path) -> Result<(), String> {
+pub(super) fn ensure_tasks_dir(path: &Path) -> Result<(), String> {
+    fs::create_dir_all(path).map_err(|err| {
+        format!(
+            "tasks directory を作成できませんでした: {} ({err})",
+            path.display()
+        )
+    })?;
+
+    let path = path.join(DEFAULT_TASKS_FILE_NAME);
     if !path.exists() {
-        fs::write(path, DEFAULT_TASKS).map_err(|err| {
+        fs::write(&path, DEFAULT_TASKS).map_err(|err| {
             format!(
                 "tasks fileを書き込めませんでした: {} ({err})",
                 path.display()
@@ -61,6 +75,13 @@ pub(super) fn ensure_tasks_file(path: &Path) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+pub fn load_task_files(dir: impl AsRef<Path>) -> Result<Vec<TaskFile>, String> {
+    task_file_paths(dir.as_ref())?
+        .into_iter()
+        .map(load_task_file)
+        .collect()
 }
 
 pub fn load_task_file(path: impl AsRef<Path>) -> Result<TaskFile, String> {
@@ -73,9 +94,50 @@ pub fn load_task_file(path: impl AsRef<Path>) -> Result<TaskFile, String> {
     assign_task_orders(&mut tasks);
 
     Ok(TaskFile {
+        label: task_file_label(path)?,
+        path: path.to_path_buf(),
         task: tasks,
         status: parsed.status,
     })
+}
+
+fn task_file_paths(dir: &Path) -> Result<Vec<PathBuf>, String> {
+    let entries = fs::read_dir(dir).map_err(|err| {
+        format!(
+            "tasks directoryを読めませんでした: {} ({err})",
+            dir.display()
+        )
+    })?;
+    let mut paths = Vec::new();
+
+    for entry in entries {
+        let entry = entry.map_err(|err| {
+            format!(
+                "tasks directory entryを読めませんでした: {} ({err})",
+                dir.display()
+            )
+        })?;
+        let path = entry.path();
+        if !path.is_file() || path.extension().and_then(|value| value.to_str()) != Some("txt") {
+            continue;
+        }
+        paths.push(path);
+    }
+
+    paths.sort_by_key(|path| task_file_label(path).unwrap_or_default());
+    if paths.is_empty() {
+        return Err("tasks directory に .txt task fileを書いてください".to_string());
+    }
+
+    Ok(paths)
+}
+
+fn task_file_label(path: &Path) -> Result<String, String> {
+    path.file_stem()
+        .and_then(|value| value.to_str())
+        .filter(|value| !value.trim().is_empty())
+        .map(|value| value.to_string())
+        .ok_or_else(|| format!("tasks file名をtab名にできません: {}", path.display()))
 }
 
 pub fn write_task_file_status(
@@ -88,11 +150,11 @@ pub fn write_task_file_status(
         .map_err(|err| format!("tasks fileを読めませんでした: {} ({err})", path.display()))?;
     let task_count = count_task_lines(&raw)?;
     if task_count == 0 {
-        return Err("tasks.txt にタスクを書いてください".to_string());
+        return Err("task file にタスクを書いてください".to_string());
     }
     if task_count != tasks.len() {
         return Err(format!(
-            "tasks.txt のタスク数とアプリ内状態が一致しません: file={task_count}, app={}",
+            "task file のタスク数とアプリ内状態が一致しません: file={task_count}, app={}",
             tasks.len()
         ));
     }
@@ -125,7 +187,7 @@ fn render_task_file_with_line_status(
             TaskLineKind::Task(_) => {}
             TaskLineKind::Ignored => {
                 if line_parts.status.is_some() {
-                    return Err("tasks.txt の行末JSONの前にタスクを書いてください".to_string());
+                    return Err("task file の行末JSONの前にタスクを書いてください".to_string());
                 }
                 output.push_str(line);
                 output.push('\n');
@@ -136,7 +198,7 @@ fn render_task_file_with_line_status(
 
         let task = tasks
             .get(task_index)
-            .ok_or_else(|| "tasks.txt のタスク数がアプリ内状態より多いです".to_string())?;
+            .ok_or_else(|| "task file のタスク数がアプリ内状態より多いです".to_string())?;
         validate_completion_times(task)?;
         let started_at = task.started_at.as_ref().map(clock::format_rfc3339_jst);
         let completed_at = task.completed_at.as_ref().map(clock::format_rfc3339_jst);
@@ -175,7 +237,7 @@ fn count_task_lines(raw: &str) -> Result<usize, String> {
             TaskLineKind::Task(_) => count += 1,
             TaskLineKind::Ignored => {
                 if line_parts.status.is_some() {
-                    return Err("tasks.txt の行末JSONの前にタスクを書いてください".to_string());
+                    return Err("task file の行末JSONの前にタスクを書いてください".to_string());
                 }
             }
             TaskLineKind::Invalid => return Err(invalid_task_line_message(line_number + 1)),
@@ -215,7 +277,7 @@ fn validate_completion_times(task: &DailyTask) -> Result<(), String> {
 
 fn validate_tasks(tasks: &[Task]) -> Result<(), String> {
     if tasks.is_empty() {
-        return Err("tasks.txt にタスクを書いてください".to_string());
+        return Err("task file にタスクを書いてください".to_string());
     }
 
     for task in tasks {

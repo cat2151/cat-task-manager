@@ -27,6 +27,8 @@ pub struct KeyBindings {
     pub hold: KeyBinding,
     pub quit: KeyBinding,
     pub edit: KeyBinding,
+    pub next_tab: KeyBinding,
+    pub previous_tab: KeyBinding,
     pub toggle_view: KeyBinding,
     pub help: KeyBinding,
 }
@@ -44,9 +46,11 @@ impl KeyBindings {
             next: parse_or_default(config.next, "j")?,
             previous: parse_or_default(config.previous, "k")?,
             advance: parse_or_default(config.advance, "enter")?,
-            hold: parse_or_default(config.hold, "h")?,
+            hold: parse_or_default(config.hold, "p")?,
             quit: parse_or_default(config.quit, "q")?,
             edit: parse_or_default(config.edit, "e")?,
+            next_tab: parse_or_default(config.next_tab, "l")?,
+            previous_tab: parse_or_default(config.previous_tab, "h")?,
             toggle_view: parse_or_default(config.toggle_view, "v")?,
             help: parse_or_default(config.help, "?")?,
         })
@@ -67,6 +71,9 @@ impl KeyBinding {
             || (matches!(self.code, KeyCode::Char(_))
                 && self.modifiers.is_empty()
                 && key.modifiers == KeyModifiers::SHIFT)
+            || (self.code == KeyCode::BackTab
+                && self.modifiers.is_empty()
+                && key.modifiers == KeyModifiers::SHIFT)
     }
 
     pub fn label(&self) -> &str {
@@ -74,10 +81,10 @@ impl KeyBinding {
     }
 }
 
-pub fn spawn_event_threads(tx: Sender<AppEvent>, config_path: PathBuf, tasks_path: PathBuf) {
+pub fn spawn_event_threads(tx: Sender<AppEvent>, config_path: PathBuf, tasks_dir: PathBuf) {
     spawn_day_change_thread(tx.clone());
     spawn_file_change_thread(tx.clone(), config_path, AppEvent::ConfigChanged);
-    spawn_file_change_thread(tx, tasks_path, AppEvent::TasksChanged);
+    spawn_tasks_change_thread(tx, tasks_dir);
 }
 
 pub fn read_next_event(rx: &Receiver<AppEvent>) -> Result<AppEvent, String> {
@@ -141,6 +148,25 @@ fn spawn_file_change_thread(tx: Sender<AppEvent>, path: PathBuf, event: AppEvent
     });
 }
 
+fn spawn_tasks_change_thread(tx: Sender<AppEvent>, path: PathBuf) {
+    thread::spawn(move || {
+        let mut last_signature = TaskDirSignature::read(&path);
+
+        loop {
+            thread::sleep(StdDuration::from_millis(500));
+            let current_signature = TaskDirSignature::read(&path);
+            if current_signature == last_signature {
+                continue;
+            }
+
+            last_signature = current_signature;
+            if tx.send(AppEvent::TasksChanged).is_err() {
+                break;
+            }
+        }
+    });
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct FileSignature {
     modified: Option<SystemTime>,
@@ -153,6 +179,30 @@ impl FileSignature {
             modified: metadata.modified().ok(),
             len: metadata.len(),
         })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct TaskDirSignature {
+    files: Vec<(PathBuf, FileSignature)>,
+}
+
+impl TaskDirSignature {
+    fn read(path: &Path) -> Option<Self> {
+        let entries = fs::read_dir(path).ok()?;
+        let mut files = Vec::new();
+
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_file() || path.extension().and_then(|value| value.to_str()) != Some("txt") {
+                continue;
+            }
+            let signature = FileSignature::read(&path)?;
+            files.push((path, signature));
+        }
+
+        files.sort_by(|left, right| left.0.cmp(&right.0));
+        Some(Self { files })
     }
 }
 

@@ -7,7 +7,7 @@ use std::{
 use chrono::{DateTime, Local};
 
 use crate::{
-    app::{DailyTask, TaskState},
+    app::{DailyTask, TaskState, TaskTab},
     clock,
     storage::AppPaths,
 };
@@ -22,6 +22,7 @@ pub struct AppLogger {
 
 #[derive(Debug, Clone)]
 pub struct TaskSnapshot {
+    tab: String,
     name: String,
     order: u32,
     source_line: u32,
@@ -60,10 +61,10 @@ impl AppLogger {
 
     pub fn log_app_start(&self, paths: &AppPaths) -> Result<(), String> {
         self.write_event(format!(
-            "アプリを開始しました: pid={} config={} tasks={} log={}",
+            "アプリを開始しました: pid={} config={} tasks_dir={} log={}",
             std::process::id(),
             quoted_path(&paths.config_path),
-            quoted_path(&paths.tasks_path),
+            quoted_path(&paths.tasks_dir),
             quoted_path(&self.path)
         ))
     }
@@ -88,17 +89,21 @@ impl AppLogger {
     pub fn log_task_changes(
         &self,
         before: &[TaskSnapshot],
-        after: &[DailyTask],
+        after: &[TaskTab],
         cause: TaskChangeCause,
     ) -> Result<(), String> {
-        for task in after {
-            let before = before
-                .iter()
-                .find(|before| before.source_line == task.source_line && before.name == task.name);
-            if !task_changed(before, task) {
-                continue;
+        for tab in after {
+            for task in &tab.tasks {
+                let before = before.iter().find(|before| {
+                    before.tab == tab.label
+                        && before.source_line == task.source_line
+                        && before.name == task.name
+                });
+                if !task_changed(before, task) {
+                    continue;
+                }
+                self.log_task_change(tab.label.as_str(), before, task, cause)?;
             }
-            self.log_task_change(before, task, cause)?;
         }
 
         Ok(())
@@ -106,6 +111,7 @@ impl AppLogger {
 
     fn log_task_change(
         &self,
+        tab: &str,
         before: Option<&TaskSnapshot>,
         after: &DailyTask,
         cause: TaskChangeCause,
@@ -116,7 +122,8 @@ impl AppLogger {
         let start_fields = start_fields(before.map(|before| &before.state), after, cause);
 
         self.write_event(format!(
-            "タスク状態を変更しました: task={} line={} order={} 変更前={} 変更後={} 開始前={} 開始後={} 完了前={} 完了後={} 原因={} 分類={}{}",
+            "タスク状態を変更しました: tab={} task={} line={} order={} 変更前={} 変更後={} 開始前={} 開始後={} 完了前={} 完了後={} 原因={} 分類={}{}",
+            quoted(tab),
             quoted(&after.name),
             before
                 .map(|before| before.source_line)
@@ -208,23 +215,25 @@ impl TaskFileStatusReadOutcome {
     fn detail_field(self) -> String {
         match self {
             TaskFileStatusReadOutcome::DateMismatch { status_date } => {
-                format!(" tasks.txtの状態日付={status_date}")
+                format!(" task fileの状態日付={status_date}")
             }
             TaskFileStatusReadOutcome::Missing | TaskFileStatusReadOutcome::Loaded => String::new(),
         }
     }
 }
 
-pub fn task_snapshots(tasks: &[DailyTask]) -> Vec<TaskSnapshot> {
-    tasks
-        .iter()
-        .map(|task| TaskSnapshot {
-            name: task.name.clone(),
-            order: task.order,
-            source_line: task.source_line,
-            state: task.state.clone(),
-            started_at: task.started_at,
-            completed_at: task.completed_at,
+pub fn task_snapshots(tabs: &[TaskTab]) -> Vec<TaskSnapshot> {
+    tabs.iter()
+        .flat_map(|tab| {
+            tab.tasks.iter().map(|task| TaskSnapshot {
+                tab: tab.label.clone(),
+                name: task.name.clone(),
+                order: task.order,
+                source_line: task.source_line,
+                state: task.state.clone(),
+                started_at: task.started_at,
+                completed_at: task.completed_at,
+            })
         })
         .collect()
 }

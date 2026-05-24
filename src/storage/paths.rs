@@ -3,14 +3,14 @@ use std::{fs, path::PathBuf};
 use super::{config, tasks, APP_NAME};
 
 const CONFIG_FILE_NAME: &str = "config.toml";
-const TASKS_FILE_NAME: &str = "tasks.txt";
+const TASKS_DIR_NAME: &str = "tasks";
 const RECORDS_DIR_NAME: &str = "records";
 
 #[derive(Debug, Clone)]
 pub struct AppPaths {
     pub root_dir: PathBuf,
     pub config_path: PathBuf,
-    pub tasks_path: PathBuf,
+    pub tasks_dir: PathBuf,
     pub records_dir: PathBuf,
 }
 
@@ -35,14 +35,14 @@ pub fn ensure_app_storage(paths: &AppPaths) -> Result<(), String> {
     })?;
 
     config::ensure_config_file(&paths.config_path)?;
-    tasks::ensure_tasks_file(&paths.tasks_path)
+    tasks::ensure_tasks_dir(&paths.tasks_dir)
 }
 
 fn paths_from_local_app_data(local_app_data: impl Into<PathBuf>) -> AppPaths {
     let root_dir = local_app_data.into().join(APP_NAME);
     AppPaths {
         config_path: root_dir.join(CONFIG_FILE_NAME),
-        tasks_path: root_dir.join(TASKS_FILE_NAME),
+        tasks_dir: root_dir.join(TASKS_DIR_NAME),
         records_dir: root_dir.join(RECORDS_DIR_NAME),
         root_dir,
     }
@@ -65,8 +65,8 @@ mod tests {
             PathBuf::from(r"C:\Users\me\AppData\Local\cat-task-manager\config.toml")
         );
         assert_eq!(
-            paths.tasks_path,
-            PathBuf::from(r"C:\Users\me\AppData\Local\cat-task-manager\tasks.txt")
+            paths.tasks_dir,
+            PathBuf::from(r"C:\Users\me\AppData\Local\cat-task-manager\tasks")
         );
         assert_eq!(
             paths.records_dir,
