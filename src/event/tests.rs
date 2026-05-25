@@ -117,9 +117,11 @@ fn terminal_key_press_becomes_app_key_event() {
         Some(AppEvent::Key(received)) => assert_eq!(received, key),
         Some(
             AppEvent::TerminalResized
+            | AppEvent::Tick
             | AppEvent::DayChanged
             | AppEvent::ConfigChanged
-            | AppEvent::TasksChanged,
+            | AppEvent::TasksChanged
+            | AppEvent::StartupGitFinished(_),
         )
         | None => panic!("expected key press event"),
     }

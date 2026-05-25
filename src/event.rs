@@ -15,9 +15,11 @@ use crate::{clock, storage::KeyBindingsConfig};
 pub enum AppEvent {
     Key(KeyEvent),
     TerminalResized,
+    Tick,
     DayChanged,
     ConfigChanged,
     TasksChanged,
+    StartupGitFinished(Result<String, String>),
 }
 
 #[derive(Debug, Clone)]
@@ -199,6 +201,8 @@ pub fn read_next_event(rx: &Receiver<AppEvent>) -> Result<AppEvent, String> {
             if let Some(event) = app_event_from_terminal_event(event) {
                 return Ok(event);
             }
+        } else {
+            return Ok(AppEvent::Tick);
         }
     }
 }

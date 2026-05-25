@@ -27,6 +27,8 @@ pub struct App {
     selected_tab: usize,
     selected_visible: usize,
     show_help: bool,
+    background_message: Option<String>,
+    spinner_frame: usize,
     message: String,
 }
 
@@ -39,6 +41,8 @@ impl App {
             selected_tab: 0,
             selected_visible: 0,
             show_help: false,
+            background_message: None,
+            spinner_frame: 0,
             message: "待機中".to_string(),
         }
     }
@@ -136,6 +140,34 @@ impl App {
 
     pub fn set_message(&mut self, message: impl Into<String>) {
         self.message = message.into();
+    }
+
+    pub fn start_background_work(&mut self, message: impl Into<String>) {
+        self.background_message = Some(message.into());
+        self.spinner_frame = 0;
+    }
+
+    pub fn finish_background_work(&mut self) {
+        self.background_message = None;
+        self.spinner_frame = 0;
+    }
+
+    pub fn tick_background_work(&mut self) {
+        if self.background_message.is_some() {
+            self.spinner_frame = self.spinner_frame.wrapping_add(1);
+        }
+    }
+
+    pub fn has_background_work(&self) -> bool {
+        self.background_message.is_some()
+    }
+
+    pub fn background_message(&self) -> Option<&str> {
+        self.background_message.as_deref()
+    }
+
+    pub fn spinner_frame(&self) -> usize {
+        self.spinner_frame
     }
 
     pub fn replace_tabs(&mut self, task_lists: Vec<TaskList>) {

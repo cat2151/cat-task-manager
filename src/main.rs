@@ -1,4 +1,4 @@
-use std::{env, error::Error, io, path::Path, process::Command, sync::mpsc};
+use std::{env, error::Error, io, path::Path, process::Command, sync::mpsc, thread};
 
 use crossterm::{
     cursor::{Hide, Show},
@@ -55,9 +55,7 @@ fn run_app() -> Result<(), Box<dyn Error>> {
     let _app_run_log = logging::AppRunLog::start(&logger, &paths)?;
 
     let config_file = storage::load_config_file(&paths.config_path)?;
-    if config_file.startup_git.auto_commit_and_push {
-        run_startup_git(&paths, &logger)?;
-    }
+    let startup_git_enabled = config_file.startup_git.auto_commit_and_push;
 
     let mut keybindings = event::KeyBindings::from_config(config_file.keybindings)?;
     let mut editors = config_file.editors;
@@ -80,7 +78,15 @@ fn run_app() -> Result<(), Box<dyn Error>> {
     let mut terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
 
     let (tx, rx) = mpsc::channel();
-    event::spawn_event_threads(tx, paths.config_path.clone(), paths.tasks_dir.clone());
+    event::spawn_event_threads(
+        tx.clone(),
+        paths.config_path.clone(),
+        paths.tasks_dir.clone(),
+    );
+    if startup_git_enabled {
+        app.start_background_work("起動時git snapshotを実行中です");
+        spawn_startup_git_thread(tx, paths.clone(), logger.clone());
+    }
 
     terminal.draw(|frame| ui::draw(frame, &app, &keybindings))?;
     run_event_loop(
@@ -96,13 +102,33 @@ fn run_app() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn run_startup_git(paths: &storage::AppPaths, logger: &logging::AppLogger) -> Result<(), String> {
-    let message = match startup_git::commit_and_push(&paths.root_dir, clock::today_jst()) {
-        Ok(outcome) => outcome.log_message(),
-        Err(err) => format!("失敗しました: {err}"),
-    };
+fn spawn_startup_git_thread(
+    tx: mpsc::Sender<AppEvent>,
+    paths: storage::AppPaths,
+    logger: logging::AppLogger,
+) {
+    thread::spawn(move || {
+        let result = run_startup_git(&paths, &logger);
+        let _ = tx.send(AppEvent::StartupGitFinished(result));
+    });
+}
 
-    logger.log_startup_git(&message)
+fn run_startup_git(
+    paths: &storage::AppPaths,
+    logger: &logging::AppLogger,
+) -> Result<String, String> {
+    match startup_git::commit_and_push(&paths.root_dir, clock::today_jst()) {
+        Ok(outcome) => {
+            let message = outcome.log_message();
+            logger.log_startup_git(&message)?;
+            Ok(message)
+        }
+        Err(err) => {
+            let message = format!("失敗しました: {err}");
+            logger.log_startup_git(&message)?;
+            Err(message)
+        }
+    }
 }
 
 fn run_event_loop(
@@ -116,35 +142,47 @@ fn run_event_loop(
 ) -> Result<(), Box<dyn Error>> {
     loop {
         let app_event = event::read_next_event(&rx)?;
-        let should_persist = !matches!(&app_event, AppEvent::TerminalResized);
+        let should_persist = event_should_persist(&app_event);
+        let mut should_draw = true;
 
         match app_event {
+            AppEvent::Tick => {
+                if app.has_background_work() {
+                    app.tick_background_work();
+                } else {
+                    should_draw = false;
+                }
+            }
             AppEvent::Key(key) => {
                 let action = keybindings.action_for(&key);
-                match action {
-                    Some(event::KeyAction::Quit) => {
-                        persist_tasks(app);
-                        break;
-                    }
-                    Some(event::KeyAction::Edit) => {
-                        let before = logging::task_snapshots(app.tabs());
-                        edit_tasks(paths, terminal, app, editors)?;
-                        log_task_changes(
-                            logger,
-                            app,
-                            &before,
-                            logging::TaskChangeCause::TaskFileRead,
-                        );
-                    }
-                    _ => match reload_tasks(paths, app) {
-                        Ok(()) => {
-                            let before = logging::task_snapshots(app.tabs());
-                            let cause = key_change_cause(action);
-                            app.handle_key(key, keybindings);
-                            log_task_changes(logger, app, &before, cause);
+                if app.has_background_work() {
+                    app.set_message("background処理中です。完了まで待ってください");
+                } else {
+                    match action {
+                        Some(event::KeyAction::Quit) => {
+                            persist_tasks(app);
+                            break;
                         }
-                        Err(err) => app.set_message(err),
-                    },
+                        Some(event::KeyAction::Edit) => {
+                            let before = logging::task_snapshots(app.tabs());
+                            edit_tasks(paths, terminal, app, editors)?;
+                            log_task_changes(
+                                logger,
+                                app,
+                                &before,
+                                logging::TaskChangeCause::TaskFileRead,
+                            );
+                        }
+                        _ => match reload_tasks(paths, app) {
+                            Ok(()) => {
+                                let before = logging::task_snapshots(app.tabs());
+                                let cause = key_change_cause(action);
+                                app.handle_key(key, keybindings);
+                                log_task_changes(logger, app, &before, cause);
+                            }
+                            Err(err) => app.set_message(err),
+                        },
+                    }
                 }
             }
             AppEvent::DayChanged => match reload_tasks(paths, app) {
@@ -172,14 +210,30 @@ fn run_event_loop(
                 log_task_changes(logger, app, &before, logging::TaskChangeCause::TaskFileRead);
             }
             AppEvent::TerminalResized => {}
+            AppEvent::StartupGitFinished(result) => {
+                app.finish_background_work();
+                match result {
+                    Ok(message) => app.set_message(format!("起動時git snapshot: {message}")),
+                    Err(err) => app.set_message(format!("起動時git snapshot: {err}")),
+                }
+            }
         }
         if should_persist {
             persist_tasks(app);
         }
-        terminal.draw(|frame| ui::draw(frame, app, keybindings))?;
+        if should_draw {
+            terminal.draw(|frame| ui::draw(frame, app, keybindings))?;
+        }
     }
 
     Ok(())
+}
+
+fn event_should_persist(event: &AppEvent) -> bool {
+    !matches!(
+        event,
+        AppEvent::TerminalResized | AppEvent::Tick | AppEvent::StartupGitFinished(_)
+    )
 }
 
 fn reflect_task_file_status(

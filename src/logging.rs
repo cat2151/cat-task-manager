@@ -15,7 +15,7 @@ use crate::{
 const LOGS_DIR_NAME: &str = "logs";
 const APP_LOG_FILE_NAME: &str = "app.log";
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct AppLogger {
     path: PathBuf,
 }
