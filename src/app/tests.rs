@@ -55,6 +55,7 @@ fn advances_tasks_in_order() {
 #[test]
 fn hold_toggles_only_in_progress_tasks() {
     let mut app = app();
+    app.select_next_tab();
     app.toggle_hold_selected();
     assert_eq!(app.tabs[0].tasks[0].state, TaskState::NotStarted);
     app.advance_selected();
@@ -205,6 +206,42 @@ fn tab_keys_switch_current_tab_from_all_tab() {
 }
 
 #[test]
+fn cursor_and_space_keys_use_default_actions() {
+    let mut app = app();
+    let keybindings = KeyBindings::from_config(KeyBindingsConfig::default()).unwrap();
+
+    app.handle_key(
+        KeyEvent::new(KeyCode::Down, KeyModifiers::empty()),
+        &keybindings,
+    );
+    assert_eq!(app.selected_visible(), 1);
+
+    app.handle_key(
+        KeyEvent::new(KeyCode::Up, KeyModifiers::empty()),
+        &keybindings,
+    );
+    assert_eq!(app.selected_visible(), 0);
+
+    app.handle_key(
+        KeyEvent::new(KeyCode::Right, KeyModifiers::empty()),
+        &keybindings,
+    );
+    assert_eq!(app.current_tab_label(), "0730");
+
+    app.handle_key(
+        KeyEvent::new(KeyCode::Left, KeyModifiers::empty()),
+        &keybindings,
+    );
+    assert_eq!(app.current_tab_label(), "all");
+
+    app.handle_key(
+        KeyEvent::new(KeyCode::Char(' '), KeyModifiers::empty()),
+        &keybindings,
+    );
+    assert_eq!(app.tabs[0].tasks[0].state, TaskState::InProgress);
+}
+
+#[test]
 fn all_tab_advances_tasks_across_file_tabs() {
     let mut app = App::new(
         vec![
@@ -228,6 +265,45 @@ fn all_tab_advances_tasks_across_file_tabs() {
 
     app.advance_selected();
     assert_eq!(app.tabs[1].tasks[0].state, TaskState::InProgress);
+}
+
+#[test]
+fn all_tab_one_line_skips_on_hold_task_for_current_display() {
+    let mut app = App::new(
+        vec![
+            task_list("0730", vec![task("a", 1, 1)]),
+            task_list("0800", vec![task("b", 1, 1)]),
+        ],
+        NaiveDate::from_ymd_opt(2026, 5, 18).unwrap(),
+    );
+
+    app.advance_selected();
+    app.toggle_hold_selected();
+    assert_eq!(app.tabs[0].tasks[0].state, TaskState::OnHold);
+
+    app.select_next_tab();
+    app.select_next_tab();
+    app.advance_selected();
+    assert_eq!(app.tabs[1].tasks[0].state, TaskState::InProgress);
+
+    app.select_next_tab();
+    assert_eq!(app.current_tab_label(), "all");
+    assert_eq!(app.selected_visible_task().unwrap().1.name, "b");
+    assert_eq!(app.selected_task_index(), Some(1));
+
+    app.toggle_view_mode();
+    let names: Vec<&str> = app
+        .visible_tasks()
+        .into_iter()
+        .map(|(_, task)| task.name.as_str())
+        .collect();
+    assert_eq!(names, vec!["a", "b"]);
+
+    app.select_next();
+    app.toggle_view_mode();
+    app.toggle_view_mode();
+    assert_eq!(app.view_mode(), ViewMode::OneLine);
+    assert_eq!(app.selected_visible_task().unwrap().1.name, "b");
 }
 
 #[test]

@@ -9,7 +9,7 @@ use ratatui::{
 
 use crate::{
     app::{App, DailyTask, TaskState, ViewMode},
-    event::KeyBindings,
+    event::{KeyAction, KeyBindings},
     storage::APP_NAME,
 };
 
@@ -164,21 +164,28 @@ fn draw_help(frame: &mut Frame, area: Rect, keybindings: &KeyBindings) {
 
 fn help_lines(keybindings: &KeyBindings) -> Vec<Line<'static>> {
     vec![
-        help_line(keybindings.next.label(), "次のタスクへ移動"),
-        help_line(keybindings.previous.label(), "前のタスクへ移動"),
-        help_line(keybindings.advance.label(), "開始/完了"),
-        help_line(keybindings.hold.label(), "保留/再開"),
-        help_line(keybindings.next_tab.label(), "次のタブ"),
-        help_line(keybindings.previous_tab.label(), "前のタブ"),
-        help_line(keybindings.toggle_view.label(), "表示切替"),
-        help_line(keybindings.edit.label(), "現在のタブのtxt編集"),
-        help_line(keybindings.quit.label(), "終了"),
-        help_line(keybindings.help.label(), "help 表示/閉じる"),
+        help_line(keybindings.label_for(KeyAction::Next), "次のタスクへ移動"),
+        help_line(
+            keybindings.label_for(KeyAction::Previous),
+            "前のタスクへ移動",
+        ),
+        help_line(keybindings.label_for(KeyAction::Advance), "開始/完了"),
+        help_line(keybindings.label_for(KeyAction::Hold), "保留/再開"),
+        help_line(keybindings.label_for(KeyAction::NextTab), "次のタブ"),
+        help_line(keybindings.label_for(KeyAction::PreviousTab), "前のタブ"),
+        help_line(keybindings.label_for(KeyAction::ToggleView), "表示切替"),
+        help_line(
+            keybindings.label_for(KeyAction::Edit),
+            "現在のタブのtxt編集",
+        ),
+        help_line(keybindings.label_for(KeyAction::Quit), "終了"),
+        help_line(keybindings.label_for(KeyAction::Help), "help 表示/閉じる"),
         help_line("esc", "help を閉じる"),
     ]
 }
 
-fn help_line(key: &str, description: &str) -> Line<'static> {
+fn help_line(key: impl Into<String>, description: &str) -> Line<'static> {
+    let key = key.into();
     Line::from(vec![
         Span::styled(format!("{key:<12}"), emphasized_style(MONOKAI_YELLOW)),
         Span::styled(description.to_string(), base_style()),

@@ -4,7 +4,7 @@ use chrono::{Local, NaiveDate};
 use crossterm::event::{KeyCode, KeyEvent};
 
 use crate::{
-    event::KeyBindings,
+    event::{KeyAction, KeyBindings},
     storage::{self, TaskStatus},
 };
 
@@ -44,34 +44,32 @@ impl App {
     }
 
     pub fn handle_key(&mut self, key: KeyEvent, keybindings: &KeyBindings) {
-        if keybindings.help.matches(&key) {
+        let action = keybindings.action_for(&key);
+        if action == Some(KeyAction::Help) {
             self.toggle_help();
         } else if self.show_help {
             if key.code == KeyCode::Esc {
                 self.show_help = false;
                 self.message = "ヘルプを閉じました".to_string();
             }
-        } else if keybindings.next.matches(&key) {
-            self.select_next();
-        } else if keybindings.previous.matches(&key) {
-            self.select_previous();
-        } else if keybindings.next_tab.matches(&key) {
-            self.select_next_tab();
-        } else if keybindings.previous_tab.matches(&key) {
-            self.select_previous_tab();
-        } else if keybindings.advance.matches(&key) {
-            self.advance_selected();
-        } else if keybindings.hold.matches(&key) {
-            self.toggle_hold_selected();
-        } else if keybindings.toggle_view.matches(&key) {
-            self.toggle_view_mode();
+        } else if let Some(action) = action {
+            match action {
+                KeyAction::Next => self.select_next(),
+                KeyAction::Previous => self.select_previous(),
+                KeyAction::NextTab => self.select_next_tab(),
+                KeyAction::PreviousTab => self.select_previous_tab(),
+                KeyAction::Advance => self.advance_selected(),
+                KeyAction::Hold => self.toggle_hold_selected(),
+                KeyAction::ToggleView => self.toggle_view_mode(),
+                KeyAction::Quit | KeyAction::Edit | KeyAction::Help => {}
+            }
         }
     }
 
     pub fn visible_tasks(&self) -> Vec<(usize, &DailyTask)> {
         self.current_task_entries()
             .into_iter()
-            .filter(|(_, _, task)| task.state.visible())
+            .filter(|(_, _, task)| self.task_is_visible(task))
             .map(|(display_index, _, task)| (display_index, task))
             .collect()
     }
@@ -275,6 +273,7 @@ impl App {
             ViewMode::Incomplete => ViewMode::All,
             ViewMode::All => ViewMode::OneLine,
         };
+        self.clamp_selection();
         self.message = format!("表示モード: {}", self.view_mode.label());
     }
 
@@ -375,9 +374,19 @@ impl App {
     fn selected_task_location(&self) -> Option<(usize, TaskLocation)> {
         self.current_task_entries()
             .into_iter()
-            .filter(|(_, _, task)| task.state.visible())
+            .filter(|(_, _, task)| self.task_is_visible(task))
             .nth(self.selected_visible)
             .map(|(display_index, location, _)| (display_index, location))
+    }
+
+    fn task_is_visible(&self, task: &DailyTask) -> bool {
+        task.state.visible() && !self.hides_on_hold_for_current_task(task)
+    }
+
+    fn hides_on_hold_for_current_task(&self, task: &DailyTask) -> bool {
+        self.current_tab_is_all()
+            && self.view_mode == ViewMode::OneLine
+            && task.state == TaskState::OnHold
     }
 
     fn task_at(&self, location: TaskLocation) -> &DailyTask {

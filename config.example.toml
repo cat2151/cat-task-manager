@@ -1,13 +1,21 @@
 editors = ["fresh", "zed", "nvim", "code"]
 
+[startup_git]
+auto_commit_and_push = false
+
 [keybindings]
-next = "j"
-previous = "k"
-advance = "enter"
-hold = "p"
-quit = "q"
-edit = "e"
-next_tab = "l"
-previous_tab = "h"
-toggle_view = "v"
-help = "?"
+j = "next"
+down = "next"
+k = "previous"
+up = "previous"
+enter = "advance"
+space = "advance"
+p = "hold"
+q = "quit"
+e = "edit"
+l = "next_tab"
+right = "next_tab"
+h = "previous_tab"
+left = "previous_tab"
+v = "toggle_view"
+"?" = "help"

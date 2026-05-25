@@ -81,23 +81,33 @@
 
 ## 設定の形
 
-`config.toml` はエディタ候補とキーバインドだけを持つ。タスクは書かない。
+`config.toml` はエディタ候補、キーバインド、起動時 git snapshot の設定だけを持つ。タスクは書かない。
 
 ```toml
 editors = ["fresh", "zed", "nvim", "code"]
 
+[startup_git]
+auto_commit_and_push = false
+
 [keybindings]
-next = "j"
-previous = "k"
-advance = "enter"
-hold = "p"
-quit = "q"
-edit = "e"
-next_tab = "l"
-previous_tab = "h"
-toggle_view = "v"
-help = "?"
+j = "next"
+down = "next"
+k = "previous"
+up = "previous"
+enter = "advance"
+space = "advance"
+p = "hold"
+q = "quit"
+e = "edit"
+l = "next_tab"
+right = "next_tab"
+h = "previous_tab"
+left = "previous_tab"
+v = "toggle_view"
+"?" = "help"
 ```
+
+`startup_git.auto_commit_and_push = true` のときだけ、起動時に1日1回、`%LOCALAPPDATA%\cat-task-manager` を git commit して push する。
 
 保存場所は Windows の `AppData Local` 配下にまとめる。
 

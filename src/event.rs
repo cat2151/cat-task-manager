@@ -22,19 +22,24 @@ pub enum AppEvent {
 
 #[derive(Debug, Clone)]
 pub struct KeyBindings {
-    pub next: KeyBinding,
-    pub previous: KeyBinding,
-    pub advance: KeyBinding,
-    pub hold: KeyBinding,
-    pub quit: KeyBinding,
-    pub edit: KeyBinding,
-    pub next_tab: KeyBinding,
-    pub previous_tab: KeyBinding,
-    pub toggle_view: KeyBinding,
-    pub help: KeyBinding,
+    bindings: Vec<(KeyBinding, KeyAction)>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeyAction {
+    Next,
+    Previous,
+    Advance,
+    Hold,
+    Quit,
+    Edit,
+    NextTab,
+    PreviousTab,
+    ToggleView,
+    Help,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KeyBinding {
     label: String,
     code: KeyCode,
@@ -43,42 +48,130 @@ pub struct KeyBinding {
 
 impl KeyBindings {
     pub fn from_config(config: KeyBindingsConfig) -> Result<Self, String> {
-        Ok(Self {
-            next: parse_or_default(config.next, "j")?,
-            previous: parse_or_default(config.previous, "k")?,
-            advance: parse_or_default(config.advance, "enter")?,
-            hold: parse_or_default(config.hold, "p")?,
-            quit: parse_or_default(config.quit, "q")?,
-            edit: parse_or_default(config.edit, "e")?,
-            next_tab: parse_or_default(config.next_tab, "l")?,
-            previous_tab: parse_or_default(config.previous_tab, "h")?,
-            toggle_view: parse_or_default(config.toggle_view, "v")?,
-            help: parse_or_default(config.help, "?")?,
-        })
+        let mut bindings: Vec<(KeyBinding, KeyAction)> = Vec::new();
+
+        for (raw_key, raw_action) in config {
+            let binding = parse_binding(&raw_key)?;
+            if let Some((existing, _)) = bindings
+                .iter()
+                .find(|(existing, _)| existing.same_key_as(&binding))
+            {
+                return Err(format!(
+                    "keybinding が重複しています: '{}' と '{}'",
+                    existing.label(),
+                    binding.label()
+                ));
+            }
+
+            bindings.push((binding, KeyAction::parse(&raw_action)?));
+        }
+
+        for action in KeyAction::ALL {
+            if !bindings
+                .iter()
+                .any(|(_, bound_action)| *bound_action == action)
+            {
+                return Err(format!(
+                    "keybindings に action '{}' がありません",
+                    action.config_name()
+                ));
+            }
+        }
+
+        Ok(Self { bindings })
+    }
+
+    pub fn action_for(&self, key: &KeyEvent) -> Option<KeyAction> {
+        self.bindings
+            .iter()
+            .find(|(binding, _)| binding.matches(key))
+            .map(|(_, action)| *action)
+    }
+
+    pub fn label_for(&self, action: KeyAction) -> String {
+        let labels = self
+            .bindings
+            .iter()
+            .filter(|(_, bound_action)| *bound_action == action)
+            .map(|(binding, _)| binding.label().to_string())
+            .collect::<Vec<_>>();
+
+        labels.join("/")
+    }
+}
+
+impl KeyAction {
+    pub const ALL: [Self; 10] = [
+        Self::Next,
+        Self::Previous,
+        Self::Advance,
+        Self::Hold,
+        Self::Quit,
+        Self::Edit,
+        Self::NextTab,
+        Self::PreviousTab,
+        Self::ToggleView,
+        Self::Help,
+    ];
+
+    fn parse(raw: &str) -> Result<Self, String> {
+        match raw.trim() {
+            "next" => Ok(Self::Next),
+            "previous" => Ok(Self::Previous),
+            "advance" => Ok(Self::Advance),
+            "hold" => Ok(Self::Hold),
+            "quit" => Ok(Self::Quit),
+            "edit" => Ok(Self::Edit),
+            "next_tab" => Ok(Self::NextTab),
+            "previous_tab" => Ok(Self::PreviousTab),
+            "toggle_view" => Ok(Self::ToggleView),
+            "help" => Ok(Self::Help),
+            _ => Err(format!(
+                "未対応の keybinding action です: '{raw}'。next、previous、advance、hold、quit、edit、next_tab、previous_tab、toggle_view、help を使ってください。"
+            )),
+        }
+    }
+
+    fn config_name(self) -> &'static str {
+        match self {
+            Self::Next => "next",
+            Self::Previous => "previous",
+            Self::Advance => "advance",
+            Self::Hold => "hold",
+            Self::Quit => "quit",
+            Self::Edit => "edit",
+            Self::NextTab => "next_tab",
+            Self::PreviousTab => "previous_tab",
+            Self::ToggleView => "toggle_view",
+            Self::Help => "help",
+        }
     }
 }
 
 impl KeyBinding {
     pub fn matches(&self, key: &KeyEvent) -> bool {
-        if key.kind != KeyEventKind::Press {
-            return false;
-        }
-
-        if key.code != self.code {
-            return false;
-        }
-
-        key.modifiers == self.modifiers
-            || (matches!(self.code, KeyCode::Char(_))
-                && self.modifiers.is_empty()
-                && key.modifiers == KeyModifiers::SHIFT)
-            || (self.code == KeyCode::BackTab
-                && self.modifiers.is_empty()
-                && key.modifiers == KeyModifiers::SHIFT)
+        Self::from_key_event(key).is_some_and(|pressed| self.same_key_as(&pressed))
     }
 
     pub fn label(&self) -> &str {
         &self.label
+    }
+
+    fn from_key_event(key: &KeyEvent) -> Option<Self> {
+        if key.kind != KeyEventKind::Press {
+            return None;
+        }
+
+        let (code, modifiers) = normalize_key(key.code, key.modifiers);
+        Some(Self {
+            label: String::new(),
+            code,
+            modifiers,
+        })
+    }
+
+    fn same_key_as(&self, other: &Self) -> bool {
+        self.code == other.code && self.modifiers == other.modifiers
     }
 }
 
@@ -208,31 +301,32 @@ impl TaskDirSignature {
     }
 }
 
-fn parse_or_default(configured: Option<String>, default: &str) -> Result<KeyBinding, String> {
-    parse_binding(configured.as_deref().unwrap_or(default))
-}
-
 fn parse_binding(raw: &str) -> Result<KeyBinding, String> {
-    let normalized = raw.trim().to_lowercase();
-    if normalized.is_empty() {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
         return Err("keybinding を空にはできません".to_string());
     }
 
     let mut modifiers = KeyModifiers::empty();
-    let mut key_part = normalized.as_str();
+    let mut key_part = trimmed;
 
-    if let Some(rest) = key_part.strip_prefix("ctrl+") {
-        modifiers |= KeyModifiers::CONTROL;
-        key_part = rest;
-    } else if let Some(rest) = key_part.strip_prefix("alt+") {
-        modifiers |= KeyModifiers::ALT;
-        key_part = rest;
-    } else if let Some(rest) = key_part.strip_prefix("shift+") {
-        modifiers |= KeyModifiers::SHIFT;
-        key_part = rest;
+    loop {
+        if let Some(rest) = strip_modifier(key_part, "ctrl+") {
+            modifiers |= KeyModifiers::CONTROL;
+            key_part = rest;
+        } else if let Some(rest) = strip_modifier(key_part, "alt+") {
+            modifiers |= KeyModifiers::ALT;
+            key_part = rest;
+        } else if let Some(rest) = strip_modifier(key_part, "shift+") {
+            modifiers |= KeyModifiers::SHIFT;
+            key_part = rest;
+        } else {
+            break;
+        }
     }
 
-    let code = match key_part {
+    let normalized_key_part = key_part.to_ascii_lowercase();
+    let code = match normalized_key_part.as_str() {
         "enter" => KeyCode::Enter,
         "space" => KeyCode::Char(' '),
         "tab" => KeyCode::Tab,
@@ -249,86 +343,47 @@ fn parse_binding(raw: &str) -> Result<KeyBinding, String> {
         "down" => KeyCode::Down,
         "left" => KeyCode::Left,
         "right" => KeyCode::Right,
-        char_key if char_key.chars().count() == 1 => {
-            KeyCode::Char(char_key.chars().next().expect("one char"))
-        }
+        _ if key_part.chars().count() == 1 => KeyCode::Char(key_part.chars().next().expect("one char")),
         _ => {
             return Err(format!(
                 "未対応の keybinding です: '{raw}'。1文字、enter、space、tab、矢印、ctrl+<key> を使ってください。"
             ))
         }
     };
+    let (code, modifiers) = normalize_key(code, modifiers);
 
     Ok(KeyBinding {
-        label: raw.trim().to_string(),
+        label: trimmed.to_string(),
         code,
         modifiers,
     })
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn parses_character_binding() {
-        let binding = parse_binding("j").unwrap();
-        assert!(binding.matches(&KeyEvent::new(KeyCode::Char('j'), KeyModifiers::empty())));
-    }
-
-    #[test]
-    fn parses_control_binding() {
-        let binding = parse_binding("ctrl+c").unwrap();
-        assert!(binding.matches(&KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)));
-    }
-
-    #[test]
-    fn parses_shifted_printable_character_binding() {
-        let binding = parse_binding("?").unwrap();
-        assert!(binding.matches(&KeyEvent::new(KeyCode::Char('?'), KeyModifiers::SHIFT)));
-    }
-
-    #[test]
-    fn binding_does_not_match_key_release() {
-        let binding = parse_binding("enter").unwrap();
-
-        assert!(!binding.matches(&KeyEvent::new_with_kind(
-            KeyCode::Enter,
-            KeyModifiers::empty(),
-            KeyEventKind::Release,
-        )));
-    }
-
-    #[test]
-    fn terminal_key_press_becomes_app_key_event() {
-        let key = KeyEvent::new(KeyCode::Enter, KeyModifiers::empty());
-
-        match app_event_from_terminal_event(Event::Key(key)) {
-            Some(AppEvent::Key(received)) => assert_eq!(received, key),
-            Some(
-                AppEvent::TerminalResized
-                | AppEvent::DayChanged
-                | AppEvent::ConfigChanged
-                | AppEvent::TasksChanged,
-            )
-            | None => panic!("expected key press event"),
-        }
-    }
-
-    #[test]
-    fn terminal_resize_becomes_app_resize_event() {
-        assert!(matches!(
-            app_event_from_terminal_event(Event::Resize(80, 24)),
-            Some(AppEvent::TerminalResized)
-        ));
-    }
-
-    #[test]
-    fn terminal_non_press_keys_are_ignored() {
-        for kind in [KeyEventKind::Repeat, KeyEventKind::Release] {
-            let key = KeyEvent::new_with_kind(KeyCode::Enter, KeyModifiers::empty(), kind);
-
-            assert!(app_event_from_terminal_event(Event::Key(key)).is_none());
-        }
-    }
+fn strip_modifier<'a>(raw: &'a str, prefix: &str) -> Option<&'a str> {
+    raw.get(..prefix.len())
+        .is_some_and(|candidate| candidate.eq_ignore_ascii_case(prefix))
+        .then(|| &raw[prefix.len()..])
 }
+
+fn normalize_key(code: KeyCode, mut modifiers: KeyModifiers) -> (KeyCode, KeyModifiers) {
+    let code = match code {
+        KeyCode::Char(character) if character.is_ascii_uppercase() => {
+            modifiers |= KeyModifiers::SHIFT;
+            KeyCode::Char(character.to_ascii_lowercase())
+        }
+        KeyCode::Char(character) if !character.is_ascii_alphabetic() => {
+            modifiers.remove(KeyModifiers::SHIFT);
+            KeyCode::Char(character)
+        }
+        KeyCode::BackTab => {
+            modifiers.remove(KeyModifiers::SHIFT);
+            KeyCode::BackTab
+        }
+        other => other,
+    };
+
+    (code, modifiers)
+}
+
+#[cfg(test)]
+mod tests;

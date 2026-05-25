@@ -13,6 +13,7 @@ mod clock;
 mod event;
 mod logging;
 mod self_update;
+mod startup_git;
 mod storage;
 mod ui;
 
@@ -54,6 +55,10 @@ fn run_app() -> Result<(), Box<dyn Error>> {
     let _app_run_log = logging::AppRunLog::start(&logger, &paths)?;
 
     let config_file = storage::load_config_file(&paths.config_path)?;
+    if config_file.startup_git.auto_commit_and_push {
+        run_startup_git(&paths, &logger)?;
+    }
+
     let mut keybindings = event::KeyBindings::from_config(config_file.keybindings)?;
     let mut editors = config_file.editors;
     let task_files = storage::load_task_files(&paths.tasks_dir)?;
@@ -91,6 +96,15 @@ fn run_app() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+fn run_startup_git(paths: &storage::AppPaths, logger: &logging::AppLogger) -> Result<(), String> {
+    let message = match startup_git::commit_and_push(&paths.root_dir, clock::today_jst()) {
+        Ok(outcome) => outcome.log_message(),
+        Err(err) => format!("失敗しました: {err}"),
+    };
+
+    logger.log_startup_git(&message)
+}
+
 fn run_event_loop(
     paths: &storage::AppPaths,
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
@@ -105,24 +119,34 @@ fn run_event_loop(
         let should_persist = !matches!(&app_event, AppEvent::TerminalResized);
 
         match app_event {
-            AppEvent::Key(key) if keybindings.quit.matches(&key) => {
-                persist_tasks(app);
-                break;
-            }
-            AppEvent::Key(key) if keybindings.edit.matches(&key) => {
-                let before = logging::task_snapshots(app.tabs());
-                edit_tasks(paths, terminal, app, editors)?;
-                log_task_changes(logger, app, &before, logging::TaskChangeCause::TaskFileRead);
-            }
-            AppEvent::Key(key) => match reload_tasks(paths, app) {
-                Ok(()) => {
-                    let before = logging::task_snapshots(app.tabs());
-                    let cause = key_change_cause(&key, keybindings);
-                    app.handle_key(key, keybindings);
-                    log_task_changes(logger, app, &before, cause);
+            AppEvent::Key(key) => {
+                let action = keybindings.action_for(&key);
+                match action {
+                    Some(event::KeyAction::Quit) => {
+                        persist_tasks(app);
+                        break;
+                    }
+                    Some(event::KeyAction::Edit) => {
+                        let before = logging::task_snapshots(app.tabs());
+                        edit_tasks(paths, terminal, app, editors)?;
+                        log_task_changes(
+                            logger,
+                            app,
+                            &before,
+                            logging::TaskChangeCause::TaskFileRead,
+                        );
+                    }
+                    _ => match reload_tasks(paths, app) {
+                        Ok(()) => {
+                            let before = logging::task_snapshots(app.tabs());
+                            let cause = key_change_cause(action);
+                            app.handle_key(key, keybindings);
+                            log_task_changes(logger, app, &before, cause);
+                        }
+                        Err(err) => app.set_message(err),
+                    },
                 }
-                Err(err) => app.set_message(err),
-            },
+            }
             AppEvent::DayChanged => match reload_tasks(paths, app) {
                 Ok(()) => {
                     let before = logging::task_snapshots(app.tabs());
@@ -273,16 +297,11 @@ fn open_with_configured_editor(path: &Path, editors: &[String]) -> Result<String
     ))
 }
 
-fn key_change_cause(
-    key: &crossterm::event::KeyEvent,
-    keybindings: &event::KeyBindings,
-) -> logging::TaskChangeCause {
-    if keybindings.advance.matches(key) {
-        logging::TaskChangeCause::KeyAdvance
-    } else if keybindings.hold.matches(key) {
-        logging::TaskChangeCause::KeyHold
-    } else {
-        logging::TaskChangeCause::KeyOther
+fn key_change_cause(action: Option<event::KeyAction>) -> logging::TaskChangeCause {
+    match action {
+        Some(event::KeyAction::Advance) => logging::TaskChangeCause::KeyAdvance,
+        Some(event::KeyAction::Hold) => logging::TaskChangeCause::KeyHold,
+        _ => logging::TaskChangeCause::KeyOther,
     }
 }
 
