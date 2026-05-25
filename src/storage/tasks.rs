@@ -64,17 +64,36 @@ pub(super) fn ensure_tasks_dir(path: &Path) -> Result<(), String> {
         )
     })?;
 
-    let path = path.join(DEFAULT_TASKS_FILE_NAME);
-    if !path.exists() {
-        fs::write(&path, DEFAULT_TASKS).map_err(|err| {
+    if tasks_dir_is_empty(path)? {
+        let default_tasks_path = path.join(DEFAULT_TASKS_FILE_NAME);
+        fs::write(&default_tasks_path, DEFAULT_TASKS).map_err(|err| {
             format!(
                 "tasks fileを書き込めませんでした: {} ({err})",
-                path.display()
+                default_tasks_path.display()
             )
         })?;
     }
 
     Ok(())
+}
+
+fn tasks_dir_is_empty(path: &Path) -> Result<bool, String> {
+    let mut entries = fs::read_dir(path).map_err(|err| {
+        format!(
+            "tasks directoryを読めませんでした: {} ({err})",
+            path.display()
+        )
+    })?;
+    entries
+        .next()
+        .transpose()
+        .map(|entry| entry.is_none())
+        .map_err(|err| {
+            format!(
+                "tasks directory entryを読めませんでした: {} ({err})",
+                path.display()
+            )
+        })
 }
 
 pub fn load_task_files(dir: impl AsRef<Path>) -> Result<Vec<TaskFile>, String> {
@@ -125,10 +144,6 @@ fn task_file_paths(dir: &Path) -> Result<Vec<PathBuf>, String> {
     }
 
     paths.sort_by_key(|path| task_file_label(path).unwrap_or_default());
-    if paths.is_empty() {
-        return Err("tasks directory に .txt task fileを書いてください".to_string());
-    }
-
     Ok(paths)
 }
 
@@ -149,9 +164,6 @@ pub fn write_task_file_status(
     let raw = fs::read_to_string(path)
         .map_err(|err| format!("tasks fileを読めませんでした: {} ({err})", path.display()))?;
     let task_count = count_task_lines(&raw)?;
-    if task_count == 0 {
-        return Err("task file にタスクを書いてください".to_string());
-    }
     if task_count != tasks.len() {
         return Err(format!(
             "task file のタスク数とアプリ内状態が一致しません: file={task_count}, app={}",
@@ -276,10 +288,6 @@ fn validate_completion_times(task: &DailyTask) -> Result<(), String> {
 }
 
 fn validate_tasks(tasks: &[Task]) -> Result<(), String> {
-    if tasks.is_empty() {
-        return Err("task file にタスクを書いてください".to_string());
-    }
-
     for task in tasks {
         if task.name.trim().is_empty() {
             return Err("タスク名を空にはできません".to_string());

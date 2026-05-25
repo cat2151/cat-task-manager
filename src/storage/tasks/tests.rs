@@ -223,12 +223,11 @@ fn load_task_file_reads_markdown_tasks_without_status_json() {
 }
 
 #[test]
-fn load_task_files_reads_txt_files_as_sorted_tabs() {
+fn load_task_files_reads_txt_files_without_requiring_tasks_txt() {
     let dir = temp_tasks_dir("task-tabs");
     fs::create_dir(&dir).unwrap();
-    fs::write(dir.join("tasks.txt"), "- [ ] later\n").unwrap();
     fs::write(dir.join("0730.txt"), "- [ ] morning\n").unwrap();
-    fs::write(dir.join("notes.md"), "- [ ] ignored\n").unwrap();
+    fs::write(dir.join("0800.txt"), "- [ ] later\n").unwrap();
 
     let loaded = load_task_files(&dir).unwrap();
 
@@ -237,7 +236,7 @@ fn load_task_files_reads_txt_files_as_sorted_tabs() {
             .iter()
             .map(|file| file.label.as_str())
             .collect::<Vec<_>>(),
-        vec!["0730", "tasks"]
+        vec!["0730", "0800"]
     );
     assert_eq!(loaded[0].task[0].name, "morning");
     assert_eq!(loaded[1].task[0].name, "later");
@@ -246,15 +245,32 @@ fn load_task_files_reads_txt_files_as_sorted_tabs() {
 }
 
 #[test]
-fn ensure_tasks_dir_creates_default_tasks_file() {
-    let dir = temp_tasks_dir("ensure-task-tabs");
-
-    ensure_tasks_dir(&dir).unwrap();
-
-    let raw = fs::read_to_string(dir.join("tasks.txt")).unwrap();
+fn ensure_tasks_dir_creates_default_only_when_directory_is_empty() {
+    let empty_dir = temp_tasks_dir("ensure-empty-task-tabs");
+    ensure_tasks_dir(&empty_dir).unwrap();
+    let raw = fs::read_to_string(empty_dir.join("tasks.txt")).unwrap();
     assert!(raw.contains("- [ ] Morning routine"));
+    fs::remove_dir_all(empty_dir).unwrap();
 
-    fs::remove_dir_all(dir).unwrap();
+    let occupied_dir = temp_tasks_dir("ensure-occupied-task-tabs");
+    fs::create_dir(&occupied_dir).unwrap();
+    fs::write(occupied_dir.join(".keep"), "").unwrap();
+    ensure_tasks_dir(&occupied_dir).unwrap();
+    assert!(!occupied_dir.join("tasks.txt").exists());
+    assert!(load_task_files(&occupied_dir).unwrap().is_empty());
+    fs::remove_dir_all(occupied_dir).unwrap();
+}
+
+#[test]
+fn empty_task_file_loads_and_persists_without_error() {
+    let path = temp_tasks_path("empty-task-file");
+    fs::write(&path, "").unwrap();
+    let loaded = load_task_file(&path).unwrap();
+    assert!(loaded.task.is_empty());
+    assert!(loaded.status.is_none());
+    write_task_file_status(&path, status_date(), &[]).unwrap();
+    assert_eq!(fs::read_to_string(&path).unwrap(), "");
+    fs::remove_file(path).unwrap();
 }
 
 #[test]
