@@ -76,7 +76,7 @@ fn draw_one_line(frame: &mut Frame, area: Rect, app: &App) {
             .block(task_block());
         frame.render_widget(task, area);
     } else {
-        let empty = Paragraph::new("表示対象のタスクはありません")
+        let empty = Paragraph::new(app.empty_visible_tasks_message())
             .style(base_style())
             .block(task_block());
         frame.render_widget(empty, area);
@@ -91,7 +91,7 @@ fn draw_incomplete_list(frame: &mut Frame, area: Rect, app: &App) {
         .collect();
 
     if items.is_empty() {
-        let empty = Paragraph::new("表示対象のタスクはありません")
+        let empty = Paragraph::new(app.empty_visible_tasks_message())
             .style(base_style())
             .block(task_block());
         frame.render_widget(empty, area);

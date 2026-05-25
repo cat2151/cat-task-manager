@@ -12,6 +12,8 @@ mod model;
 pub use model::{DailyTask, TaskList, TaskState, TaskTab, ViewMode};
 
 const ALL_TAB_LABEL: &str = "all";
+const EMPTY_VISIBLE_TASKS_MESSAGE: &str = "表示対象のタスクはありません";
+const ALL_DONE_VISIBLE_TASKS_MESSAGE: &str = "このタブのタスクはすべて完了済みです";
 
 #[derive(Debug, Clone, Copy)]
 struct TaskLocation {
@@ -138,6 +140,14 @@ impl App {
         &self.message
     }
 
+    pub fn empty_visible_tasks_message(&self) -> &'static str {
+        if self.current_tab_tasks_are_all_done() {
+            ALL_DONE_VISIBLE_TASKS_MESSAGE
+        } else {
+            EMPTY_VISIBLE_TASKS_MESSAGE
+        }
+    }
+
     pub fn set_message(&mut self, message: impl Into<String>) {
         self.message = message.into();
     }
@@ -242,7 +252,7 @@ impl App {
 
     fn advance_selected(&mut self) {
         let Some((display_index, location)) = self.selected_task_location() else {
-            self.message = "表示対象のタスクがありません".to_string();
+            self.message = self.empty_visible_tasks_message().to_string();
             return;
         };
 
@@ -279,7 +289,7 @@ impl App {
 
     fn toggle_hold_selected(&mut self) {
         let Some((_, location)) = self.selected_task_location() else {
-            self.message = "表示対象のタスクがありません".to_string();
+            self.message = self.empty_visible_tasks_message().to_string();
             return;
         };
 
@@ -413,6 +423,11 @@ impl App {
 
     fn task_is_visible(&self, task: &DailyTask) -> bool {
         task.state.visible() && !self.hides_on_hold_for_current_task(task)
+    }
+
+    fn current_tab_tasks_are_all_done(&self) -> bool {
+        let tasks = self.current_tasks();
+        !tasks.is_empty() && tasks.iter().all(|task| task.state == TaskState::Done)
     }
 
     fn hides_on_hold_for_current_task(&self, task: &DailyTask) -> bool {

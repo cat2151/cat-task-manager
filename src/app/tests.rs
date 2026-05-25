@@ -307,6 +307,50 @@ fn all_tab_one_line_skips_on_hold_task_for_current_display() {
 }
 
 #[test]
+fn empty_visible_tasks_message_mentions_all_done_for_current_tab() {
+    let mut app = App::new(
+        vec![
+            task_list("0730", vec![task("a", 1, 1)]),
+            task_list("0800", vec![task("b", 1, 1)]),
+        ],
+        NaiveDate::from_ymd_opt(2026, 5, 18).unwrap(),
+    );
+    app.tabs[0].tasks[0].state = TaskState::Done;
+
+    app.select_next_tab();
+
+    assert_eq!(
+        app.empty_visible_tasks_message(),
+        "このタブのタスクはすべて完了済みです"
+    );
+}
+
+#[test]
+fn empty_visible_tasks_message_stays_generic_when_current_tab_is_not_all_done() {
+    let mut app = app();
+    app.tabs[0].tasks[0].state = TaskState::Done;
+    app.tabs[0].tasks[1].state = TaskState::TimeOut;
+
+    assert_eq!(
+        app.empty_visible_tasks_message(),
+        "表示対象のタスクはありません"
+    );
+}
+
+#[test]
+fn empty_visible_tasks_message_stays_generic_when_current_tab_has_no_tasks() {
+    let app = App::new(
+        vec![task_list("0730", vec![])],
+        NaiveDate::from_ymd_opt(2026, 5, 18).unwrap(),
+    );
+
+    assert_eq!(
+        app.empty_visible_tasks_message(),
+        "表示対象のタスクはありません"
+    );
+}
+
+#[test]
 fn question_mark_toggles_help() {
     let mut app = app();
     let keybindings = KeyBindings::from_config(KeyBindingsConfig::default()).unwrap();
