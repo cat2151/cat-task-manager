@@ -3,7 +3,7 @@ use std::{collections::HashSet, fs, path::Path};
 use serde::{de::Error as _, Deserialize, Deserializer};
 
 const DEFAULT_EDITORS: [&str; 4] = ["fresh", "zed", "nvim", "code"];
-const DEFAULT_KEYBINDINGS: [(&str, &str); 15] = [
+const DEFAULT_KEYBINDINGS: [(&str, &str); 16] = [
     ("j", "next"),
     ("down", "next"),
     ("k", "previous"),
@@ -11,6 +11,7 @@ const DEFAULT_KEYBINDINGS: [(&str, &str); 15] = [
     ("enter", "advance"),
     ("space", "advance"),
     ("p", "hold"),
+    ("d", "defer"),
     ("q", "quit"),
     ("e", "edit"),
     ("l", "next_tab"),
@@ -33,6 +34,7 @@ up = "previous"
 enter = "advance"
 space = "advance"
 p = "hold"
+d = "defer"
 q = "quit"
 e = "edit"
 l = "next_tab"
@@ -227,7 +229,7 @@ fn ensure_config_defaults(path: &Path) -> Result<(), String> {
         changed = true;
     }
 
-    table
+    let keybindings = table
         .get_mut("keybindings")
         .and_then(toml::Value::as_table_mut)
         .ok_or_else(|| {
@@ -236,6 +238,16 @@ fn ensure_config_defaults(path: &Path) -> Result<(), String> {
                 path.display()
             )
         })?;
+
+    for (key, action) in DEFAULT_KEYBINDINGS {
+        let action_exists = keybindings
+            .values()
+            .any(|value| value.as_str() == Some(action));
+        if !action_exists && !keybindings.contains_key(key) {
+            keybindings.insert(key.to_string(), toml::Value::String(action.to_string()));
+            changed = true;
+        }
+    }
 
     if !table.contains_key("startup_git") {
         table.insert(
@@ -340,18 +352,22 @@ mod tests {
     }
 
     #[test]
-    fn config_defaults_leave_existing_keybindings_table_alone() {
+    fn config_defaults_preserve_existing_keybindings_and_add_missing_actions() {
         let path = temp_config_path("preserve-keybindings");
         fs::write(
             &path,
-            "editors = [\"nvim\"]\n\n[keybindings]\nj = \"next\"\n",
+            "editors = [\"nvim\"]\n\n[keybindings]\nj = \"next\"\nx = \"previous\"\n",
         )
         .unwrap();
 
         ensure_config_defaults(&path).unwrap();
 
         assert_eq!(keybinding(&path, "j"), "next");
+        assert_eq!(keybinding(&path, "x"), "previous");
         assert_eq!(optional_keybinding(&path, "down"), None);
+        assert_eq!(optional_keybinding(&path, "k"), None);
+        assert_eq!(keybinding(&path, "enter"), "advance");
+        assert_eq!(keybinding(&path, "d"), "defer");
 
         fs::remove_file(path).unwrap();
     }
@@ -364,6 +380,7 @@ mod tests {
         ensure_config_defaults(&path).unwrap();
 
         assert_eq!(keybinding(&path, "j"), "next");
+        assert_eq!(keybinding(&path, "d"), "defer");
         assert_eq!(keybinding(&path, "right"), "next_tab");
         assert_eq!(keybinding(&path, "?"), "help");
 
@@ -399,6 +416,7 @@ mod tests {
         assert_eq!(file.keybindings.get("j"), Some("next"));
         assert_eq!(file.keybindings.get("down"), Some("next"));
         assert_eq!(file.keybindings.get("space"), Some("advance"));
+        assert_eq!(file.keybindings.get("d"), Some("defer"));
         assert_eq!(file.keybindings.get("right"), Some("next_tab"));
         assert_eq!(file.keybindings.get("?"), Some("help"));
     }

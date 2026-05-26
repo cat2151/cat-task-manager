@@ -24,6 +24,8 @@ const MONOKAI_ORANGE: Color = Color::Rgb(253, 151, 31);
 const MONOKAI_BLUE: Color = Color::Rgb(102, 217, 239);
 const TAB_SEPARATOR: &str = " | ";
 const TAB_SEPARATOR_WIDTH: u16 = 3;
+const ON_HOLD_ONE_LINE_NOTE: &str =
+    "保留中です。このタブは止めて、他タブのタスクを実施してください";
 
 pub fn draw(frame: &mut Frame, app: &App, keybindings: &KeyBindings) {
     frame.render_widget(Block::default().style(base_style()), frame.area());
@@ -70,8 +72,8 @@ pub fn draw(frame: &mut Frame, app: &App, keybindings: &KeyBindings) {
 }
 
 fn draw_one_line(frame: &mut Frame, area: Rect, app: &App) {
-    if let Some((_, task)) = app.selected_visible_task() {
-        let task = Paragraph::new(task_line(task, false))
+    if let Some(lines) = one_line_task_lines(app) {
+        let task = Paragraph::new(lines)
             .style(base_style())
             .block(task_block());
         frame.render_widget(task, area);
@@ -81,6 +83,18 @@ fn draw_one_line(frame: &mut Frame, area: Rect, app: &App) {
             .block(task_block());
         frame.render_widget(empty, area);
     }
+}
+
+fn one_line_task_lines(app: &App) -> Option<Vec<Line<'_>>> {
+    let (_, task) = app.selected_visible_task()?;
+    let mut lines = vec![task_line(task, false)];
+    if task.state == TaskState::OnHold && !app.current_tab_is_all() {
+        lines.push(Line::from(Span::styled(
+            ON_HOLD_ONE_LINE_NOTE,
+            fg_style(MONOKAI_ORANGE),
+        )));
+    }
+    Some(lines)
 }
 
 fn draw_incomplete_list(frame: &mut Frame, area: Rect, app: &App) {
@@ -157,7 +171,7 @@ fn draw_footer(frame: &mut Frame, area: Rect, app: &App) {
 }
 
 fn draw_help(frame: &mut Frame, area: Rect, keybindings: &KeyBindings) {
-    let area = centered_rect(58, 13, area);
+    let area = centered_rect(58, 14, area);
     let help = Paragraph::new(help_lines(keybindings))
         .style(base_style())
         .block(themed_block("help"));
@@ -193,7 +207,11 @@ fn help_lines(keybindings: &KeyBindings) -> Vec<Line<'static>> {
             "前のタスクへ移動",
         ),
         help_line(keybindings.label_for(KeyAction::Advance), "開始/完了"),
-        help_line(keybindings.label_for(KeyAction::Hold), "保留/再開"),
+        help_line(
+            keybindings.label_for(KeyAction::Hold),
+            "保留（他タブへ）/再開",
+        ),
+        help_line(keybindings.label_for(KeyAction::Defer), "後回し"),
         help_line(keybindings.label_for(KeyAction::NextTab), "次のタブ"),
         help_line(keybindings.label_for(KeyAction::PreviousTab), "前のタブ"),
         help_line(keybindings.label_for(KeyAction::ToggleView), "表示切替"),
@@ -347,6 +365,7 @@ fn state_color(label: &str) -> Color {
         "未着手" => MONOKAI_COMMENT,
         "実施中" => MONOKAI_GREEN,
         "保留" => MONOKAI_ORANGE,
+        "後回し" => MONOKAI_YELLOW,
         "完了" => MONOKAI_BLUE,
         "時間切れ" => MONOKAI_PINK,
         _ => MONOKAI_FG,

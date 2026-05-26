@@ -297,6 +297,44 @@ fn load_task_file_reads_line_end_status_json_without_task_identity() {
 }
 
 #[test]
+fn load_and_write_deferred_line_end_status() {
+    let path = temp_tasks_path("deferred-line-end-status");
+    fs::write(
+        &path,
+        "- [ ] a {\"date\":\"2026-05-18\",\"state\":\"deferred\"}\n",
+    )
+    .unwrap();
+
+    let loaded = load_task_file(&path).unwrap();
+    let status = loaded.status.unwrap();
+    assert_eq!(status.states[0].state, TaskState::Deferred);
+
+    let tasks = loaded
+        .task
+        .iter()
+        .zip(&status.states)
+        .map(|(task, status)| DailyTask {
+            name: task.name.clone(),
+            order: task.order,
+            source_line: task.source_line,
+            state: status.state.clone(),
+            started_at: status.started_at,
+            completed_at: status.completed_at,
+        })
+        .collect::<Vec<_>>();
+
+    write_task_file_status(&path, status.date, &tasks).unwrap();
+
+    let raw = fs::read_to_string(&path).unwrap();
+    assert_eq!(
+        raw,
+        "- [ ] a {\"date\":\"2026-05-18\",\"state\":\"deferred\"}\n"
+    );
+
+    fs::remove_file(path).unwrap();
+}
+
+#[test]
 fn missing_line_end_status_defaults_to_not_started() {
     let path = temp_tasks_path("partial-line-end-status-json");
     fs::write(

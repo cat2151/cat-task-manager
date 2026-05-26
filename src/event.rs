@@ -33,6 +33,7 @@ pub enum KeyAction {
     Previous,
     Advance,
     Hold,
+    Defer,
     Quit,
     Edit,
     NextTab,
@@ -103,11 +104,12 @@ impl KeyBindings {
 }
 
 impl KeyAction {
-    pub const ALL: [Self; 10] = [
+    pub const ALL: [Self; 11] = [
         Self::Next,
         Self::Previous,
         Self::Advance,
         Self::Hold,
+        Self::Defer,
         Self::Quit,
         Self::Edit,
         Self::NextTab,
@@ -122,6 +124,7 @@ impl KeyAction {
             "previous" => Ok(Self::Previous),
             "advance" => Ok(Self::Advance),
             "hold" => Ok(Self::Hold),
+            "defer" => Ok(Self::Defer),
             "quit" => Ok(Self::Quit),
             "edit" => Ok(Self::Edit),
             "next_tab" => Ok(Self::NextTab),
@@ -129,7 +132,7 @@ impl KeyAction {
             "toggle_view" => Ok(Self::ToggleView),
             "help" => Ok(Self::Help),
             _ => Err(format!(
-                "未対応の keybinding action です: '{raw}'。next、previous、advance、hold、quit、edit、next_tab、previous_tab、toggle_view、help を使ってください。"
+                "未対応の keybinding action です: '{raw}'。next、previous、advance、hold、defer、quit、edit、next_tab、previous_tab、toggle_view、help を使ってください。"
             )),
         }
     }
@@ -140,6 +143,7 @@ impl KeyAction {
             Self::Previous => "previous",
             Self::Advance => "advance",
             Self::Hold => "hold",
+            Self::Defer => "defer",
             Self::Quit => "quit",
             Self::Edit => "edit",
             Self::NextTab => "next_tab",

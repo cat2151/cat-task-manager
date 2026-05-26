@@ -37,6 +37,7 @@ fn keybindings_map_multiple_keys_to_one_action() {
         ("enter", "advance"),
         ("space", "advance"),
         ("p", "hold"),
+        ("d", "defer"),
         ("q", "quit"),
         ("e", "edit"),
         ("l", "next_tab"),
@@ -57,6 +58,10 @@ fn keybindings_map_multiple_keys_to_one_action() {
     assert_eq!(
         keybindings.action_for(&KeyEvent::new(KeyCode::Char(' '), KeyModifiers::empty())),
         Some(KeyAction::Advance)
+    );
+    assert_eq!(
+        keybindings.action_for(&KeyEvent::new(KeyCode::Char('d'), KeyModifiers::empty())),
+        Some(KeyAction::Defer)
     );
 }
 

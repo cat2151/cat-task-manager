@@ -1,9 +1,13 @@
 use chrono::{DateTime, Local, NaiveDate};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::text::Line;
 use std::path::PathBuf;
 
 use super::*;
-use crate::storage::Task;
+use crate::{
+    event::KeyBindings,
+    storage::{KeyBindingsConfig, Task},
+};
 
 fn task(name: &str, order: u32, source_line: u32) -> Task {
     Task {
@@ -69,4 +73,61 @@ fn one_line_task_line_does_not_show_completed_duration() {
     let line = task_line(&task, false);
 
     assert!(!line_text(&line).contains("作業時間"));
+}
+
+#[test]
+fn task_line_shows_deferred_state() {
+    let task = DailyTask {
+        name: "later".to_string(),
+        order: 1,
+        source_line: 1,
+        state: TaskState::Deferred,
+        started_at: None,
+        completed_at: None,
+    };
+
+    let line = task_line(&task, false);
+
+    assert!(line_text(&line).contains("後回し"));
+}
+
+#[test]
+fn individual_tab_one_line_on_hold_task_includes_note() {
+    let mut app = App::new(
+        vec![task_list("0730", vec![task("waiting", 1, 1)])],
+        NaiveDate::from_ymd_opt(2026, 5, 18).unwrap(),
+    );
+    let keybindings = KeyBindings::from_config(KeyBindingsConfig::default()).unwrap();
+    app.handle_key(
+        KeyEvent::new(KeyCode::Char('l'), KeyModifiers::empty()),
+        &keybindings,
+    );
+    app.tabs[0].tasks[0].state = TaskState::OnHold;
+
+    let lines = one_line_task_lines(&app).unwrap();
+
+    assert_eq!(lines.len(), 2);
+    assert!(line_text(&lines[0]).contains("waiting"));
+    assert!(line_text(&lines[0]).contains("保留"));
+    assert!(line_text(&lines[1]).contains("他タブのタスク"));
+}
+
+#[test]
+fn all_tab_one_line_skips_on_hold_task_without_note() {
+    let mut app = App::new(
+        vec![
+            task_list(
+                "0730",
+                vec![task("waiting", 1, 1), task("same tab later", 2, 2)],
+            ),
+            task_list("0800", vec![task("next", 1, 1)]),
+        ],
+        NaiveDate::from_ymd_opt(2026, 5, 18).unwrap(),
+    );
+    app.tabs[0].tasks[0].state = TaskState::OnHold;
+
+    let lines = one_line_task_lines(&app).unwrap();
+
+    assert_eq!(lines.len(), 1);
+    assert!(line_text(&lines[0]).contains("next"));
 }

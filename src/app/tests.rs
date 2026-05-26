@@ -1,7 +1,7 @@
 use super::*;
 use crate::storage::KeyBindingsConfig;
 use crate::storage::Task;
-use chrono::DateTime;
+use chrono::{DateTime, Local};
 use crossterm::event::KeyModifiers;
 use std::path::PathBuf;
 
@@ -67,10 +67,55 @@ fn hold_toggles_only_in_progress_tasks() {
 }
 
 #[test]
+fn on_hold_task_still_blocks_next_task() {
+    let mut app = app();
+
+    app.select_next_tab();
+    app.advance_selected();
+    app.toggle_hold_selected();
+    app.select_next();
+    app.advance_selected();
+
+    assert_eq!(app.tabs[0].tasks[1].state, TaskState::NotStarted);
+    assert_eq!(app.message(), "前のタスクが完了していません");
+}
+
+#[test]
+fn deferred_task_does_not_block_next_task() {
+    let mut app = app();
+
+    app.defer_selected();
+    assert_eq!(app.tabs[0].tasks[0].state, TaskState::Deferred);
+    assert!(app.tabs[0].tasks[0].started_at.is_none());
+    assert_eq!(app.selected_visible_task().unwrap().1.name, "b");
+
+    app.advance_selected();
+
+    assert_eq!(app.tabs[0].tasks[1].state, TaskState::InProgress);
+}
+
+#[test]
+fn advance_resumes_deferred_task() {
+    let mut app = app();
+
+    app.advance_selected();
+    app.defer_selected();
+    assert_eq!(app.tabs[0].tasks[0].state, TaskState::Deferred);
+
+    app.toggle_view_mode();
+    app.advance_selected();
+
+    assert_eq!(app.tabs[0].tasks[0].state, TaskState::InProgress);
+    assert!(app.tabs[0].tasks[0].started_at.is_some());
+    assert!(app.tabs[0].tasks[0].completed_at.is_none());
+}
+
+#[test]
 fn day_change_keeps_done_and_times_out_other_states_for_records() {
     assert_eq!(TaskState::Done.on_day_changed(), TaskState::Done);
     assert_eq!(TaskState::NotStarted.on_day_changed(), TaskState::TimeOut);
     assert_eq!(TaskState::OnHold.on_day_changed(), TaskState::TimeOut);
+    assert_eq!(TaskState::Deferred.on_day_changed(), TaskState::TimeOut);
 }
 
 #[test]
@@ -239,6 +284,12 @@ fn cursor_and_space_keys_use_default_actions() {
         &keybindings,
     );
     assert_eq!(app.tabs[0].tasks[0].state, TaskState::InProgress);
+
+    app.handle_key(
+        KeyEvent::new(KeyCode::Char('d'), KeyModifiers::empty()),
+        &keybindings,
+    );
+    assert_eq!(app.tabs[0].tasks[0].state, TaskState::Deferred);
 }
 
 #[test]
@@ -304,6 +355,29 @@ fn all_tab_one_line_skips_on_hold_task_for_current_display() {
     app.toggle_view_mode();
     assert_eq!(app.view_mode(), ViewMode::OneLine);
     assert_eq!(app.selected_visible_task().unwrap().1.name, "b");
+}
+
+#[test]
+fn all_tab_one_line_skips_rest_of_held_tab_and_starts_other_tab_task() {
+    let mut app = App::new(
+        vec![
+            task_list("0730", vec![task("a", 1, 1), task("b", 2, 2)]),
+            task_list("0800", vec![task("c", 1, 1)]),
+        ],
+        NaiveDate::from_ymd_opt(2026, 5, 18).unwrap(),
+    );
+
+    app.advance_selected();
+    app.toggle_hold_selected();
+
+    assert_eq!(app.current_tab_label(), "all");
+    assert_eq!(app.tabs[0].tasks[0].state, TaskState::OnHold);
+    assert_eq!(app.selected_visible_task().unwrap().1.name, "c");
+
+    app.advance_selected();
+
+    assert_eq!(app.tabs[0].tasks[1].state, TaskState::NotStarted);
+    assert_eq!(app.tabs[1].tasks[0].state, TaskState::InProgress);
 }
 
 #[test]

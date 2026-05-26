@@ -22,6 +22,7 @@ impl TaskState {
             TaskState::Done => "done",
             TaskState::TimeOut => "timeout",
             TaskState::OnHold => "on_hold",
+            TaskState::Deferred => "deferred",
         }
     }
 
@@ -32,6 +33,7 @@ impl TaskState {
             "done" => Some(TaskState::Done),
             "timeout" => Some(TaskState::TimeOut),
             "on_hold" => Some(TaskState::OnHold),
+            "deferred" => Some(TaskState::Deferred),
             _ => None,
         }
     }

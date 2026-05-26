@@ -11,6 +11,7 @@ pub enum TaskState {
     Done,
     TimeOut,
     OnHold,
+    Deferred,
 }
 
 impl TaskState {
@@ -28,14 +29,19 @@ impl TaskState {
             TaskState::Done => "完了",
             TaskState::TimeOut => "時間切れ",
             TaskState::OnHold => "保留",
+            TaskState::Deferred => "後回し",
         }
     }
 
     pub fn visible(&self) -> bool {
         matches!(
             self,
-            TaskState::NotStarted | TaskState::InProgress | TaskState::OnHold
+            TaskState::NotStarted | TaskState::InProgress | TaskState::OnHold | TaskState::Deferred
         )
+    }
+
+    pub fn allows_next_task(&self) -> bool {
+        matches!(self, TaskState::Done | TaskState::Deferred)
     }
 }
 

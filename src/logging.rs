@@ -35,6 +35,7 @@ pub struct TaskSnapshot {
 pub enum TaskChangeCause {
     KeyAdvance,
     KeyHold,
+    KeyDefer,
     KeyOther,
     TaskFileRead,
     DayChanged,
@@ -183,6 +184,7 @@ impl TaskChangeCause {
         match self {
             TaskChangeCause::KeyAdvance => "advance key",
             TaskChangeCause::KeyHold => "hold key",
+            TaskChangeCause::KeyDefer => "defer key",
             TaskChangeCause::KeyOther => "その他のkey",
             TaskChangeCause::TaskFileRead => "tasks file読み込み",
             TaskChangeCause::DayChanged => "日付変更",
@@ -191,9 +193,10 @@ impl TaskChangeCause {
 
     fn group_label(self) -> &'static str {
         match self {
-            TaskChangeCause::KeyAdvance | TaskChangeCause::KeyHold | TaskChangeCause::KeyOther => {
-                "key操作"
-            }
+            TaskChangeCause::KeyAdvance
+            | TaskChangeCause::KeyHold
+            | TaskChangeCause::KeyDefer
+            | TaskChangeCause::KeyOther => "key操作",
             TaskChangeCause::TaskFileRead => "tasks file",
             TaskChangeCause::DayChanged => "その他",
         }

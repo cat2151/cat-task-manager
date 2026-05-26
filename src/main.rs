@@ -355,6 +355,7 @@ fn key_change_cause(action: Option<event::KeyAction>) -> logging::TaskChangeCaus
     match action {
         Some(event::KeyAction::Advance) => logging::TaskChangeCause::KeyAdvance,
         Some(event::KeyAction::Hold) => logging::TaskChangeCause::KeyHold,
+        Some(event::KeyAction::Defer) => logging::TaskChangeCause::KeyDefer,
         _ => logging::TaskChangeCause::KeyOther,
     }
 }

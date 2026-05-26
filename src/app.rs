@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use chrono::{Local, NaiveDate};
+use chrono::NaiveDate;
 use crossterm::event::{KeyCode, KeyEvent};
 
 use crate::{
@@ -8,6 +8,7 @@ use crate::{
     storage::{self, TaskStatus},
 };
 
+mod actions;
 mod model;
 pub use model::{DailyTask, TaskList, TaskState, TaskTab, ViewMode};
 
@@ -66,6 +67,7 @@ impl App {
                 KeyAction::PreviousTab => self.select_previous_tab(),
                 KeyAction::Advance => self.advance_selected(),
                 KeyAction::Hold => self.toggle_hold_selected(),
+                KeyAction::Defer => self.defer_selected(),
                 KeyAction::ToggleView => self.toggle_view_mode(),
                 KeyAction::Quit | KeyAction::Edit | KeyAction::Help => {}
             }
@@ -75,7 +77,7 @@ impl App {
     pub fn visible_tasks(&self) -> Vec<(usize, &DailyTask)> {
         self.current_task_entries()
             .into_iter()
-            .filter(|(_, _, task)| self.task_is_visible(task))
+            .filter(|(_, location, task)| self.task_is_visible(*location, task))
             .map(|(display_index, _, task)| (display_index, task))
             .collect()
     }
@@ -222,112 +224,6 @@ impl App {
         }
     }
 
-    fn select_next(&mut self) {
-        let visible_len = self.visible_count();
-        if visible_len == 0 {
-            self.selected_visible = 0;
-            return;
-        }
-        self.selected_visible = (self.selected_visible + 1).min(visible_len - 1);
-    }
-
-    fn select_previous(&mut self) {
-        self.selected_visible = self.selected_visible.saturating_sub(1);
-    }
-
-    fn select_next_tab(&mut self) {
-        self.selected_tab = (self.selected_tab + 1) % self.display_tab_count();
-        self.selected_visible = 0;
-        self.message = format!("タブ: {}", self.current_tab_label());
-    }
-
-    fn select_previous_tab(&mut self) {
-        self.selected_tab = self
-            .selected_tab
-            .checked_sub(1)
-            .unwrap_or_else(|| self.display_tab_count() - 1);
-        self.selected_visible = 0;
-        self.message = format!("タブ: {}", self.current_tab_label());
-    }
-
-    fn advance_selected(&mut self) {
-        let Some((display_index, location)) = self.selected_task_location() else {
-            self.message = self.empty_visible_tasks_message().to_string();
-            return;
-        };
-
-        match self.task_at(location).state.clone() {
-            TaskState::NotStarted => {
-                if self.previous_task_is_done(display_index) {
-                    let now = Local::now();
-                    let task = self.task_at_mut(location);
-                    task.state = TaskState::InProgress;
-                    task.started_at = Some(now);
-                    task.completed_at = None;
-                    self.message = format!("開始しました: {}", task.name);
-                } else {
-                    self.message = "前のタスクが完了していません".to_string();
-                }
-            }
-            TaskState::InProgress => {
-                let now = Local::now();
-                let task = self.task_at_mut(location);
-                task.state = TaskState::Done;
-                if task.started_at.is_none() {
-                    task.started_at = Some(now);
-                }
-                task.completed_at = Some(now);
-                self.message = format!("完了しました: {}", task.name);
-                self.clamp_selection();
-            }
-            TaskState::OnHold => {
-                self.message = "進める前に保留を解除してください".to_string();
-            }
-            TaskState::Done | TaskState::TimeOut => {}
-        }
-    }
-
-    fn toggle_hold_selected(&mut self) {
-        let Some((_, location)) = self.selected_task_location() else {
-            self.message = self.empty_visible_tasks_message().to_string();
-            return;
-        };
-
-        let task = self.task_at_mut(location);
-        match task.state {
-            TaskState::InProgress => {
-                task.state = TaskState::OnHold;
-                self.message = format!("保留しました: {}", task.name);
-            }
-            TaskState::OnHold => {
-                task.state = TaskState::InProgress;
-                self.message = format!("再開しました: {}", task.name);
-            }
-            _ => {
-                self.message = "保留できるのは実施中のタスクだけです".to_string();
-            }
-        }
-    }
-
-    fn toggle_view_mode(&mut self) {
-        self.view_mode = match self.view_mode {
-            ViewMode::OneLine => ViewMode::Incomplete,
-            ViewMode::Incomplete => ViewMode::All,
-            ViewMode::All => ViewMode::OneLine,
-        };
-        self.clamp_selection();
-        self.message = format!("表示モード: {}", self.view_mode.label());
-    }
-
-    fn toggle_help(&mut self) {
-        self.show_help = !self.show_help;
-        self.message = if self.show_help {
-            "ヘルプを表示しています".to_string()
-        } else {
-            "ヘルプを閉じました".to_string()
-        };
-    }
-
     pub fn selected_task_index(&self) -> Option<usize> {
         self.visible_tasks()
             .get(self.selected_visible)
@@ -347,14 +243,17 @@ impl App {
         }
     }
 
-    fn previous_task_is_done(&self, display_index: usize) -> bool {
+    fn previous_task_allows_start(&self, display_index: usize, location: TaskLocation) -> bool {
         if display_index == 0 {
             return true;
         }
 
         self.current_task_entries()
-            .get(display_index - 1)
-            .is_some_and(|(_, _, task)| task.state == TaskState::Done)
+            .into_iter()
+            .take(display_index)
+            .all(|(_, previous_location, task)| {
+                !self.task_blocks_start_of(previous_location, task, location)
+            })
     }
 
     fn reset_for_new_day(&mut self, new_date: NaiveDate) {
@@ -416,13 +315,13 @@ impl App {
     fn selected_task_location(&self) -> Option<(usize, TaskLocation)> {
         self.current_task_entries()
             .into_iter()
-            .filter(|(_, _, task)| self.task_is_visible(task))
+            .filter(|(_, location, task)| self.task_is_visible(*location, task))
             .nth(self.selected_visible)
             .map(|(display_index, location, _)| (display_index, location))
     }
 
-    fn task_is_visible(&self, task: &DailyTask) -> bool {
-        task.state.visible() && !self.hides_on_hold_for_current_task(task)
+    fn task_is_visible(&self, location: TaskLocation, task: &DailyTask) -> bool {
+        task.state.visible() && !self.hides_from_one_line_task(location, task)
     }
 
     fn current_tab_tasks_are_all_done(&self) -> bool {
@@ -430,10 +329,40 @@ impl App {
         !tasks.is_empty() && tasks.iter().all(|task| task.state == TaskState::Done)
     }
 
-    fn hides_on_hold_for_current_task(&self, task: &DailyTask) -> bool {
-        self.current_tab_is_all()
-            && self.view_mode == ViewMode::OneLine
-            && task.state == TaskState::OnHold
+    fn hides_from_one_line_task(&self, location: TaskLocation, task: &DailyTask) -> bool {
+        self.view_mode == ViewMode::OneLine
+            && (task.state == TaskState::Deferred
+                || (self.current_tab_is_all()
+                    && (task.state == TaskState::OnHold
+                        || self.same_tab_has_prior_on_hold(location))))
+    }
+
+    fn same_tab_has_prior_on_hold(&self, location: TaskLocation) -> bool {
+        self.tabs[location.tab_index].tasks[..location.task_index]
+            .iter()
+            .any(|task| task.state == TaskState::OnHold)
+    }
+
+    fn task_blocks_start_of(
+        &self,
+        previous_location: TaskLocation,
+        previous_task: &DailyTask,
+        location: TaskLocation,
+    ) -> bool {
+        if previous_task.state.allows_next_task() {
+            return false;
+        }
+
+        !(self.current_tab_is_all()
+            && previous_location.tab_index != location.tab_index
+            && self.tab_has_on_hold(previous_location.tab_index))
+    }
+
+    fn tab_has_on_hold(&self, tab_index: usize) -> bool {
+        self.tabs[tab_index]
+            .tasks
+            .iter()
+            .any(|task| task.state == TaskState::OnHold)
     }
 
     fn task_at(&self, location: TaskLocation) -> &DailyTask {
