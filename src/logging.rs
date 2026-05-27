@@ -74,8 +74,8 @@ impl AppLogger {
         self.write_event(format!("アプリを終了しました: pid={}", std::process::id()))
     }
 
-    pub fn log_startup_git(&self, message: &str) -> Result<(), String> {
-        self.write_event(format!("起動時git snapshot: {message}"))
+    pub fn log_git_snapshot(&self, label: &str, message: &str) -> Result<(), String> {
+        self.write_event(format!("{label}: {message}"))
     }
 
     pub fn log_task_file_status_read(

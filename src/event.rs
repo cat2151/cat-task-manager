@@ -9,7 +9,10 @@ use std::{
     time::{Duration as StdDuration, SystemTime},
 };
 
-use crate::{clock, storage::KeyBindingsConfig};
+use crate::{
+    clock,
+    storage::{self, KeyBindingsConfig},
+};
 
 #[derive(Debug, Clone)]
 pub enum AppEvent {
@@ -19,7 +22,9 @@ pub enum AppEvent {
     DayChanged,
     ConfigChanged,
     TasksChanged,
+    BackgroundWorkMessage(String),
     StartupGitFinished(Result<String, String>),
+    DayChangeGitFinished(Result<String, String>),
 }
 
 #[derive(Debug, Clone)]
@@ -297,7 +302,7 @@ impl TaskDirSignature {
 
         for entry in entries.flatten() {
             let path = entry.path();
-            if !path.is_file() || path.extension().and_then(|value| value.to_str()) != Some("txt") {
+            if !storage::is_task_file_path(&path) {
                 continue;
             }
             let signature = FileSignature::read(&path)?;

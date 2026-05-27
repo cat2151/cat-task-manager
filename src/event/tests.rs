@@ -126,7 +126,9 @@ fn terminal_key_press_becomes_app_key_event() {
             | AppEvent::DayChanged
             | AppEvent::ConfigChanged
             | AppEvent::TasksChanged
-            | AppEvent::StartupGitFinished(_),
+            | AppEvent::BackgroundWorkMessage(_)
+            | AppEvent::StartupGitFinished(_)
+            | AppEvent::DayChangeGitFinished(_),
         )
         | None => panic!("expected key press event"),
     }

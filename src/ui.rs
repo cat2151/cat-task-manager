@@ -3,7 +3,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph},
+    widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap},
     Frame,
 };
 
@@ -181,7 +181,7 @@ fn draw_help(frame: &mut Frame, area: Rect, keybindings: &KeyBindings) {
 }
 
 fn draw_background_overlay(frame: &mut Frame, area: Rect, app: &App) {
-    let area = centered_rect(58, 5, area);
+    let area = centered_rect(70, 7, area);
     let spinner = spinner(app.spinner_frame());
     let message = app.background_message().unwrap_or("background処理中です");
     let overlay = Paragraph::new(vec![
@@ -193,7 +193,8 @@ fn draw_background_overlay(frame: &mut Frame, area: Rect, app: &App) {
         Line::from(Span::styled(message.to_string(), base_style())),
     ])
     .style(base_style())
-    .block(themed_block("background"));
+    .block(themed_block("background"))
+    .wrap(Wrap { trim: false });
 
     frame.render_widget(Clear, area);
     frame.render_widget(overlay, area);
@@ -215,10 +216,7 @@ fn help_lines(keybindings: &KeyBindings) -> Vec<Line<'static>> {
         help_line(keybindings.label_for(KeyAction::NextTab), "次のタブ"),
         help_line(keybindings.label_for(KeyAction::PreviousTab), "前のタブ"),
         help_line(keybindings.label_for(KeyAction::ToggleView), "表示切替"),
-        help_line(
-            keybindings.label_for(KeyAction::Edit),
-            "現在のタブのtxt編集",
-        ),
+        help_line(keybindings.label_for(KeyAction::Edit), "現在のタブのmd編集"),
         help_line(keybindings.label_for(KeyAction::Quit), "終了"),
         help_line(keybindings.label_for(KeyAction::Help), "help 表示/閉じる"),
         help_line("esc", "help を閉じる"),

@@ -16,7 +16,8 @@ mod parser;
 use parser::{invalid_task_line_message, parse_task_file_content, split_task_line, TaskLineKind};
 
 const DEFAULT_TASKS: &str = "- [ ] Morning routine\n- [ ] Check mail\n- [ ] Code review\n";
-const DEFAULT_TASKS_FILE_NAME: &str = "tasks.txt";
+const TASK_FILE_EXTENSION: &str = "md";
+const DEFAULT_TASKS_FILE_NAME: &str = "tasks.md";
 
 #[derive(Debug, Clone)]
 pub struct Task {
@@ -137,7 +138,7 @@ fn task_file_paths(dir: &Path) -> Result<Vec<PathBuf>, String> {
             )
         })?;
         let path = entry.path();
-        if !path.is_file() || path.extension().and_then(|value| value.to_str()) != Some("txt") {
+        if !is_task_file_path(&path) {
             continue;
         }
         paths.push(path);
@@ -145,6 +146,14 @@ fn task_file_paths(dir: &Path) -> Result<Vec<PathBuf>, String> {
 
     paths.sort_by_key(|path| task_file_label(path).unwrap_or_default());
     Ok(paths)
+}
+
+pub fn is_task_file_path(path: &Path) -> bool {
+    path.is_file()
+        && path
+            .extension()
+            .and_then(|value| value.to_str())
+            .is_some_and(|extension| extension.eq_ignore_ascii_case(TASK_FILE_EXTENSION))
 }
 
 fn task_file_label(path: &Path) -> Result<String, String> {

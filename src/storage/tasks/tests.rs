@@ -11,7 +11,7 @@ fn temp_tasks_path(test_name: &str) -> PathBuf {
         .unwrap()
         .as_nanos();
     std::env::temp_dir().join(format!(
-        "cat-task-manager-{test_name}-{}-{suffix}.txt",
+        "cat-task-manager-{test_name}-{}-{suffix}.md",
         std::process::id()
     ))
 }
@@ -53,6 +53,8 @@ fn parse_tasks_block(tasks_block: &str) -> Result<Vec<Task>, String> {
     Ok(parser::parse_task_file_content(tasks_block, status_date())?.tasks)
 }
 
+mod write;
+
 #[test]
 fn markdown_task_lines_are_parsed_and_comments_are_ignored() {
     let tasks = parse_tasks_block(
@@ -77,7 +79,7 @@ fn markdown_task_lines_are_parsed_and_comments_are_ignored() {
 }
 
 #[test]
-fn current_tasks_txt_note_patterns_are_ignored() {
+fn current_tasks_md_note_patterns_are_ignored() {
     let parsed = parser::parse_task_file_content(
         "\
 ## Project notes
@@ -223,11 +225,12 @@ fn load_task_file_reads_markdown_tasks_without_status_json() {
 }
 
 #[test]
-fn load_task_files_reads_txt_files_without_requiring_tasks_txt() {
+fn load_task_files_reads_md_files_without_requiring_tasks_md() {
     let dir = temp_tasks_dir("task-tabs");
     fs::create_dir(&dir).unwrap();
-    fs::write(dir.join("0730.txt"), "- [ ] morning\n").unwrap();
-    fs::write(dir.join("0800.txt"), "- [ ] later\n").unwrap();
+    fs::write(dir.join("0730.md"), "- [ ] morning\n").unwrap();
+    fs::write(dir.join("0800.md"), "- [ ] later\n").unwrap();
+    fs::write(dir.join("ignored.txt"), "- [ ] ignored\n").unwrap();
 
     let loaded = load_task_files(&dir).unwrap();
 
@@ -248,7 +251,7 @@ fn load_task_files_reads_txt_files_without_requiring_tasks_txt() {
 fn ensure_tasks_dir_creates_default_only_when_directory_is_empty() {
     let empty_dir = temp_tasks_dir("ensure-empty-task-tabs");
     ensure_tasks_dir(&empty_dir).unwrap();
-    let raw = fs::read_to_string(empty_dir.join("tasks.txt")).unwrap();
+    let raw = fs::read_to_string(empty_dir.join("tasks.md")).unwrap();
     assert!(raw.contains("- [ ] Morning routine"));
     fs::remove_dir_all(empty_dir).unwrap();
 
@@ -256,7 +259,7 @@ fn ensure_tasks_dir_creates_default_only_when_directory_is_empty() {
     fs::create_dir(&occupied_dir).unwrap();
     fs::write(occupied_dir.join(".keep"), "").unwrap();
     ensure_tasks_dir(&occupied_dir).unwrap();
-    assert!(!occupied_dir.join("tasks.txt").exists());
+    assert!(!occupied_dir.join("tasks.md").exists());
     assert!(load_task_files(&occupied_dir).unwrap().is_empty());
     fs::remove_dir_all(occupied_dir).unwrap();
 }
@@ -425,60 +428,4 @@ fn invalid_line_end_json_is_rejected() {
             .to_string();
 
     assert!(err.contains("行末JSONが不正"));
-}
-
-#[test]
-fn write_task_file_status_replaces_line_end_json() {
-    let path = temp_tasks_path("write-status");
-    fs::write(
-        &path,
-        "- [ ] a {\"date\":\"2026-05-17\",\"state\":\"not_started\"}\n\n# comment\n- [x] b {\"date\":\"2026-05-17\",\"state\":\"done\"}\n",
-    )
-    .unwrap();
-    let date = NaiveDate::from_ymd_opt(2026, 5, 18).unwrap();
-    let tasks = vec![
-        daily_task("a", 1, 1, TaskState::Done),
-        daily_task("b", 2, 2, TaskState::InProgress),
-    ];
-
-    write_task_file_status(&path, date, &tasks).unwrap();
-
-    let raw = fs::read_to_string(&path).unwrap();
-    assert_eq!(
-        raw,
-        "- [x] a {\"date\":\"2026-05-18\",\"state\":\"done\",\"started_at\":\"2026-05-18T09:12:00+09:00\",\"completed_at\":\"2026-05-18T09:12:00+09:00\"}\n\n# comment\n- [ ] b {\"date\":\"2026-05-18\",\"state\":\"in_progress\"}\n"
-    );
-    assert!(!raw.contains("\"states\""));
-    assert!(!raw.contains("\"name\""));
-    assert!(!raw.contains("\"line\""));
-    assert!(!raw.contains("\"order\""));
-
-    fs::remove_file(path).unwrap();
-}
-
-#[test]
-fn write_task_file_status_saves_gmt_timestamps_as_jst() {
-    let path = temp_tasks_path("write-status-jst");
-    fs::write(&path, "- [ ] a\n").unwrap();
-    let date = NaiveDate::from_ymd_opt(2026, 5, 18).unwrap();
-    let time = DateTime::parse_from_rfc3339("2026-05-18T00:12:00+00:00")
-        .unwrap()
-        .with_timezone(&Local);
-    let tasks = vec![DailyTask {
-        name: "a".to_string(),
-        order: 1,
-        source_line: 1,
-        state: TaskState::Done,
-        started_at: Some(time),
-        completed_at: Some(time),
-    }];
-
-    write_task_file_status(&path, date, &tasks).unwrap();
-
-    let raw = fs::read_to_string(&path).unwrap();
-    assert!(raw.contains("\"started_at\":\"2026-05-18T09:12:00+09:00\""));
-    assert!(raw.contains("\"completed_at\":\"2026-05-18T09:12:00+09:00\""));
-    assert!(!raw.contains("+00:00"));
-
-    fs::remove_file(path).unwrap();
 }

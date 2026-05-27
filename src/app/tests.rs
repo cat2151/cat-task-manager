@@ -23,7 +23,7 @@ fn app() -> App {
 fn task_list(label: &str, tasks: Vec<Task>) -> TaskList {
     TaskList {
         label: label.to_string(),
-        path: PathBuf::from(format!("{label}.txt")),
+        path: PathBuf::from(format!("{label}.md")),
         tasks,
     }
 }

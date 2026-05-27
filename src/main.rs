@@ -1,20 +1,18 @@
-use std::{env, error::Error, io, path::Path, process::Command, sync::mpsc, thread};
+use std::{env, error::Error, io, path::Path, sync::mpsc};
 
-use crossterm::{
-    cursor::{Hide, Show},
-    execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
-};
 use ratatui::{backend::CrosstermBackend, Terminal};
 
 mod app;
 mod cli;
 mod clock;
+mod editor;
 mod event;
+mod git_snapshot;
 mod logging;
 mod self_update;
 mod startup_git;
 mod storage;
+mod terminal;
 mod ui;
 
 use app::{App, DailyTask, TaskList, TaskTab};
@@ -74,7 +72,7 @@ fn run_app() -> Result<(), Box<dyn Error>> {
     )?;
     persist_tasks(&mut app);
 
-    let _terminal_guard = TerminalGuard::enter()?;
+    let _terminal_guard = terminal::TerminalGuard::enter()?;
     let mut terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
 
     let (tx, rx) = mpsc::channel();
@@ -85,7 +83,7 @@ fn run_app() -> Result<(), Box<dyn Error>> {
     );
     if startup_git_enabled {
         app.start_background_work("起動時git snapshotを実行中です");
-        spawn_startup_git_thread(tx, paths.clone(), logger.clone());
+        git_snapshot::spawn_startup_snapshot(tx.clone(), paths.clone(), logger.clone());
     }
 
     terminal.draw(|frame| ui::draw(frame, &app, &keybindings))?;
@@ -95,40 +93,21 @@ fn run_app() -> Result<(), Box<dyn Error>> {
         &mut app,
         &mut keybindings,
         &mut editors,
-        rx,
         &logger,
+        EventLoopRuntime {
+            tx,
+            rx,
+            startup_git_enabled,
+        },
     )?;
 
     Ok(())
 }
 
-fn spawn_startup_git_thread(
+struct EventLoopRuntime {
     tx: mpsc::Sender<AppEvent>,
-    paths: storage::AppPaths,
-    logger: logging::AppLogger,
-) {
-    thread::spawn(move || {
-        let result = run_startup_git(&paths, &logger);
-        let _ = tx.send(AppEvent::StartupGitFinished(result));
-    });
-}
-
-fn run_startup_git(
-    paths: &storage::AppPaths,
-    logger: &logging::AppLogger,
-) -> Result<String, String> {
-    match startup_git::commit_and_push(&paths.root_dir, clock::today_jst()) {
-        Ok(outcome) => {
-            let message = outcome.log_message();
-            logger.log_startup_git(&message)?;
-            Ok(message)
-        }
-        Err(err) => {
-            let message = format!("失敗しました: {err}");
-            logger.log_startup_git(&message)?;
-            Err(message)
-        }
-    }
+    rx: mpsc::Receiver<AppEvent>,
+    startup_git_enabled: bool,
 }
 
 fn run_event_loop(
@@ -137,12 +116,14 @@ fn run_event_loop(
     app: &mut App,
     keybindings: &mut event::KeyBindings,
     editors: &mut Vec<String>,
-    rx: mpsc::Receiver<AppEvent>,
     logger: &logging::AppLogger,
+    runtime: EventLoopRuntime,
 ) -> Result<(), Box<dyn Error>> {
+    let mut pending_day_change = false;
+
     loop {
-        let app_event = event::read_next_event(&rx)?;
-        let should_persist = event_should_persist(&app_event);
+        let app_event = event::read_next_event(&runtime.rx)?;
+        let mut should_persist = event_should_persist(&app_event);
         let mut should_draw = true;
 
         match app_event {
@@ -185,14 +166,22 @@ fn run_event_loop(
                     }
                 }
             }
-            AppEvent::DayChanged => match reload_tasks(paths, app) {
-                Ok(()) => {
-                    let before = logging::task_snapshots(app.tabs());
-                    app.complete_day(&paths.records_dir, clock::today_jst());
-                    log_task_changes(logger, app, &before, logging::TaskChangeCause::DayChanged);
+            AppEvent::DayChanged => {
+                if app.has_background_work() {
+                    pending_day_change = true;
+                    should_persist = false;
+                    app.set_background_message("background処理後に日付変更処理を実行します");
+                } else {
+                    handle_day_changed(
+                        paths,
+                        app,
+                        logger,
+                        &runtime.tx,
+                        runtime.startup_git_enabled,
+                        &mut should_persist,
+                    );
                 }
-                Err(err) => app.set_message(err),
-            },
+            }
             AppEvent::ConfigChanged => match reload_config(paths, keybindings, editors) {
                 Ok(()) => app.set_message("設定をhot reloadしました"),
                 Err(err) => app.set_message(err),
@@ -210,11 +199,33 @@ fn run_event_loop(
                 log_task_changes(logger, app, &before, logging::TaskChangeCause::TaskFileRead);
             }
             AppEvent::TerminalResized => {}
+            AppEvent::BackgroundWorkMessage(message) => {
+                app.set_background_message(message);
+            }
             AppEvent::StartupGitFinished(result) => {
                 app.finish_background_work();
                 match result {
                     Ok(message) => app.set_message(format!("起動時git snapshot: {message}")),
                     Err(err) => app.set_message(format!("起動時git snapshot: {err}")),
+                }
+                if pending_day_change {
+                    pending_day_change = false;
+                    handle_day_changed(
+                        paths,
+                        app,
+                        logger,
+                        &runtime.tx,
+                        runtime.startup_git_enabled,
+                        &mut should_persist,
+                    );
+                }
+            }
+            AppEvent::DayChangeGitFinished(result) => {
+                pending_day_change = false;
+                app.finish_background_work();
+                match result {
+                    Ok(message) => finish_day_change(paths, app, logger, Some(&message)),
+                    Err(err) => app.set_message(format!("日付変更前git snapshot: {err}")),
                 }
             }
         }
@@ -232,8 +243,53 @@ fn run_event_loop(
 fn event_should_persist(event: &AppEvent) -> bool {
     !matches!(
         event,
-        AppEvent::TerminalResized | AppEvent::Tick | AppEvent::StartupGitFinished(_)
+        AppEvent::TerminalResized
+            | AppEvent::Tick
+            | AppEvent::BackgroundWorkMessage(_)
+            | AppEvent::StartupGitFinished(_)
     )
+}
+
+fn handle_day_changed(
+    paths: &storage::AppPaths,
+    app: &mut App,
+    logger: &logging::AppLogger,
+    tx: &mpsc::Sender<AppEvent>,
+    startup_git_enabled: bool,
+    should_persist: &mut bool,
+) {
+    match reload_tasks(paths, app) {
+        Ok(()) if startup_git_enabled => {
+            persist_tasks(app);
+            *should_persist = false;
+            app.start_background_work("日付変更前git snapshotを実行中です");
+            git_snapshot::spawn_before_day_change_snapshot(
+                tx.clone(),
+                paths.clone(),
+                logger.clone(),
+                app.current_date,
+            );
+        }
+        Ok(()) => finish_day_change(paths, app, logger, None),
+        Err(err) => app.set_message(err),
+    }
+}
+
+fn finish_day_change(
+    paths: &storage::AppPaths,
+    app: &mut App,
+    logger: &logging::AppLogger,
+    snapshot_message: Option<&str>,
+) {
+    let before = logging::task_snapshots(app.tabs());
+    app.complete_day(&paths.records_dir, clock::today_jst());
+    log_task_changes(logger, app, &before, logging::TaskChangeCause::DayChanged);
+    match snapshot_message {
+        Some(message) => app.set_message(format!(
+            "日付変更前git snapshot: {message}。tasksを翌日化しました"
+        )),
+        None => app.set_message("tasksを翌日化しました"),
+    }
 }
 
 fn reflect_task_file_status(
@@ -283,14 +339,14 @@ fn edit_tasks(
     };
     let label = app.current_tab_label().to_string();
 
-    TerminalGuard::suspend()?;
-    let edit_result = open_with_configured_editor(&path, editors);
-    TerminalGuard::resume()?;
+    terminal::TerminalGuard::suspend()?;
+    let edit_result = editor::open_with_configured_editor(&path, editors);
+    terminal::TerminalGuard::resume()?;
     terminal.clear()?;
 
     match edit_result {
         Ok(editor) => match reload_tasks(paths, app) {
-            Ok(()) => app.set_message(format!("{label}.txtを編集しました: {editor}")),
+            Ok(()) => app.set_message(format!("{label}.mdを編集しました: {editor}")),
             Err(err) => app.set_message(err),
         },
         Err(err) => app.set_message(err),
@@ -323,32 +379,6 @@ fn reload_tasks(paths: &storage::AppPaths, app: &mut App) -> Result<(), String> 
     }
 
     Ok(())
-}
-
-fn open_with_configured_editor(path: &Path, editors: &[String]) -> Result<String, String> {
-    let mut failures = Vec::new();
-
-    for editor in editors
-        .iter()
-        .map(|editor| editor.trim())
-        .filter(|editor| !editor.is_empty())
-    {
-        match Command::new(editor).arg(path).status() {
-            Ok(status) if status.success() => return Ok(editor.to_string()),
-            Ok(status) => failures.push(format!("{editor}: 終了 status が失敗です ({status})")),
-            Err(err) => failures.push(format!("{editor}: {err}")),
-        }
-    }
-
-    if failures.is_empty() {
-        return Err("エディタが設定されていません".to_string());
-    }
-
-    Err(format!(
-        "ファイルを開けませんでした: {} ({})",
-        path.display(),
-        failures.join("; ")
-    ))
 }
 
 fn key_change_cause(action: Option<event::KeyAction>) -> logging::TaskChangeCause {
@@ -401,33 +431,4 @@ fn tasks_differ(before: &[DailyTask], after: &[DailyTask]) -> bool {
                 || before.started_at != after.started_at
                 || before.completed_at != after.completed_at
         })
-}
-
-struct TerminalGuard;
-
-impl TerminalGuard {
-    fn enter() -> Result<Self, Box<dyn Error>> {
-        enable_raw_mode()?;
-        execute!(io::stdout(), EnterAlternateScreen, Hide)?;
-        Ok(Self)
-    }
-
-    fn suspend() -> Result<(), Box<dyn Error>> {
-        disable_raw_mode()?;
-        execute!(io::stdout(), LeaveAlternateScreen, Show)?;
-        Ok(())
-    }
-
-    fn resume() -> Result<(), Box<dyn Error>> {
-        enable_raw_mode()?;
-        execute!(io::stdout(), EnterAlternateScreen, Hide)?;
-        Ok(())
-    }
-}
-
-impl Drop for TerminalGuard {
-    fn drop(&mut self) {
-        let _ = disable_raw_mode();
-        let _ = execute!(io::stdout(), LeaveAlternateScreen, Show);
-    }
 }

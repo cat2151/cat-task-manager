@@ -5,7 +5,7 @@ use crossterm::event::{KeyCode, KeyEvent};
 
 use crate::{
     event::{KeyAction, KeyBindings},
-    storage::{self, TaskStatus},
+    storage::TaskStatus,
 };
 
 mod actions;
@@ -159,6 +159,14 @@ impl App {
         self.spinner_frame = 0;
     }
 
+    pub fn set_background_message(&mut self, message: impl Into<String>) {
+        if self.background_message.is_some() {
+            self.background_message = Some(message.into());
+        } else {
+            self.set_message(message);
+        }
+    }
+
     pub fn finish_background_work(&mut self) {
         self.background_message = None;
         self.spinner_frame = 0;
@@ -212,16 +220,10 @@ impl App {
         self.clamp_selection();
     }
 
-    pub fn complete_day(&mut self, records_dir: impl AsRef<Path>, new_date: NaiveDate) {
-        match storage::write_day_record(records_dir, self.current_date, &self.tabs) {
-            Ok(path) => {
-                self.reset_for_new_day(new_date);
-                self.message = format!("記録を書き出しました: {}", path.display());
-            }
-            Err(err) => {
-                self.message = err;
-            }
-        }
+    pub fn complete_day(&mut self, _records_dir: impl AsRef<Path>, new_date: NaiveDate) {
+        // records output is frozen while validating the date-change snapshot flow.
+        self.reset_for_new_day(new_date);
+        self.message = format!("日付を更新しました: {new_date}");
     }
 
     pub fn selected_task_index(&self) -> Option<usize> {

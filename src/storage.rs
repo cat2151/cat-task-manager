@@ -9,9 +9,9 @@ mod tasks;
 
 pub use config::{load_config_file, KeyBindingsConfig};
 pub use paths::{app_paths, ensure_app_storage, AppPaths};
-pub use records::write_day_record;
 pub use tasks::{
-    load_task_files, write_task_file_status, Task, TaskFile, TaskFileStatus, TaskStatus,
+    is_task_file_path, load_task_files, write_task_file_status, Task, TaskFile, TaskFileStatus,
+    TaskStatus,
 };
 
 impl TaskState {

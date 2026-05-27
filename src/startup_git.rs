@@ -5,7 +5,30 @@ use std::{
 
 use chrono::NaiveDate;
 
-const SNAPSHOT_COMMIT_PREFIX: &str = "起動時snapshot";
+const STARTUP_SNAPSHOT_COMMIT_PREFIX: &str = "起動時snapshot";
+const BEFORE_DAY_CHANGE_SNAPSHOT_COMMIT_PREFIX: &str = "日付変更前snapshot";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SnapshotKind {
+    Startup,
+    BeforeDayChange,
+}
+
+impl SnapshotKind {
+    pub fn log_label(self) -> &'static str {
+        match self {
+            SnapshotKind::Startup => "起動時git snapshot",
+            SnapshotKind::BeforeDayChange => "日付変更前git snapshot",
+        }
+    }
+
+    fn commit_prefix(self) -> &'static str {
+        match self {
+            SnapshotKind::Startup => STARTUP_SNAPSHOT_COMMIT_PREFIX,
+            SnapshotKind::BeforeDayChange => BEFORE_DAY_CHANGE_SNAPSHOT_COMMIT_PREFIX,
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StartupGitOutcome {
@@ -21,7 +44,7 @@ impl StartupGitOutcome {
                 format!("commitしてpushしました: {commit_message}")
             }
             StartupGitOutcome::AlreadyCommitted { commit_message } => {
-                format!("今日のcommitは作成済みです。pushだけ実行しました: {commit_message}")
+                format!("対象日のcommitは作成済みです。pushだけ実行しました: {commit_message}")
             }
             StartupGitOutcome::NoChanges { commit_message } => {
                 format!("commit対象の変更はありません。pushだけ実行しました: {commit_message}")
@@ -33,11 +56,12 @@ impl StartupGitOutcome {
 pub fn commit_and_push(
     root_dir: impl AsRef<Path>,
     date: NaiveDate,
+    kind: SnapshotKind,
 ) -> Result<StartupGitOutcome, String> {
     let root_dir = root_dir.as_ref();
     ensure_git_work_tree(root_dir)?;
 
-    let commit_message = snapshot_commit_message(date);
+    let commit_message = snapshot_commit_message(kind, date);
     if has_snapshot_commit(root_dir, &commit_message)? {
         run_git(root_dir, &["push"])?;
         return Ok(StartupGitOutcome::AlreadyCommitted { commit_message });
@@ -156,8 +180,8 @@ fn git_command(root_dir: &Path, args: &[&str]) -> Command {
     command
 }
 
-fn snapshot_commit_message(date: NaiveDate) -> String {
-    format!("{SNAPSHOT_COMMIT_PREFIX} {date}")
+fn snapshot_commit_message(kind: SnapshotKind, date: NaiveDate) -> String {
+    format!("{} {date}", kind.commit_prefix())
 }
 
 fn output_summary(output: &Output) -> String {
@@ -181,10 +205,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn snapshot_commit_message_uses_startup_date() {
+    fn snapshot_commit_message_uses_snapshot_kind_and_date() {
         let date = NaiveDate::from_ymd_opt(2026, 5, 25).unwrap();
 
-        assert_eq!(snapshot_commit_message(date), "起動時snapshot 2026-05-25");
+        assert_eq!(
+            snapshot_commit_message(SnapshotKind::Startup, date),
+            "起動時snapshot 2026-05-25"
+        );
+        assert_eq!(
+            snapshot_commit_message(SnapshotKind::BeforeDayChange, date),
+            "日付変更前snapshot 2026-05-25"
+        );
     }
 
     #[test]

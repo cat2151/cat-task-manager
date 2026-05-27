@@ -15,6 +15,7 @@ pub enum TaskState {
 }
 
 impl TaskState {
+    #[allow(dead_code)]
     pub fn on_day_changed(&self) -> Self {
         match self {
             TaskState::Done => TaskState::Done,

@@ -20,7 +20,7 @@ fn task(name: &str, order: u32, source_line: u32) -> Task {
 fn task_list(label: &str, tasks: Vec<Task>) -> crate::app::TaskList {
     crate::app::TaskList {
         label: label.to_string(),
-        path: PathBuf::from(format!("{label}.txt")),
+        path: PathBuf::from(format!("{label}.md")),
         tasks,
     }
 }
