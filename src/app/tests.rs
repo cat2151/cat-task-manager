@@ -111,14 +111,6 @@ fn advance_resumes_deferred_task() {
 }
 
 #[test]
-fn day_change_keeps_done_and_times_out_other_states_for_records() {
-    assert_eq!(TaskState::Done.on_day_changed(), TaskState::Done);
-    assert_eq!(TaskState::NotStarted.on_day_changed(), TaskState::TimeOut);
-    assert_eq!(TaskState::OnHold.on_day_changed(), TaskState::TimeOut);
-    assert_eq!(TaskState::Deferred.on_day_changed(), TaskState::TimeOut);
-}
-
-#[test]
 fn replace_tabs_resets_state_to_tasks_file_content() {
     let mut app = app();
     app.advance_selected();
@@ -403,7 +395,7 @@ fn empty_visible_tasks_message_mentions_all_done_for_current_tab() {
 fn empty_visible_tasks_message_stays_generic_when_current_tab_is_not_all_done() {
     let mut app = app();
     app.tabs[0].tasks[0].state = TaskState::Done;
-    app.tabs[0].tasks[1].state = TaskState::TimeOut;
+    app.tabs[0].tasks[1].state = TaskState::NotStarted;
 
     assert_eq!(
         app.empty_visible_tasks_message(),
@@ -440,4 +432,24 @@ fn question_mark_toggles_help() {
         &keybindings,
     );
     assert!(!app.show_help());
+}
+
+#[test]
+fn stats_key_opens_and_closes_history_stats_screen() {
+    let mut app = app();
+    let keybindings = KeyBindings::from_config(KeyBindingsConfig::default()).unwrap();
+
+    assert_eq!(app.screen(), AppScreen::Tasks);
+    app.handle_key(
+        KeyEvent::new(KeyCode::Char('s'), KeyModifiers::empty()),
+        &keybindings,
+    );
+    assert_eq!(app.screen(), AppScreen::HistoryStats);
+    assert!(app.history_stats().is_loading());
+
+    app.handle_key(
+        KeyEvent::new(KeyCode::Char('s'), KeyModifiers::empty()),
+        &keybindings,
+    );
+    assert_eq!(app.screen(), AppScreen::Tasks);
 }

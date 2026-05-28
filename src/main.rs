@@ -8,14 +8,16 @@ mod clock;
 mod editor;
 mod event;
 mod git_snapshot;
+mod history_stats;
 mod logging;
 mod self_update;
 mod startup_git;
 mod storage;
+mod task_diff;
 mod terminal;
 mod ui;
 
-use app::{App, DailyTask, TaskList, TaskTab};
+use app::{App, TaskList};
 use event::AppEvent;
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -84,6 +86,8 @@ fn run_app() -> Result<(), Box<dyn Error>> {
     if startup_git_enabled {
         app.start_background_work("起動時git snapshotを実行中です");
         git_snapshot::spawn_startup_snapshot(tx.clone(), paths.clone(), logger.clone());
+    } else if app.start_history_stats_prefetch() {
+        history_stats::spawn_history_stats(tx.clone(), paths.clone());
     }
 
     terminal.draw(|frame| ui::draw(frame, &app, &keybindings))?;
@@ -130,6 +134,8 @@ fn run_event_loop(
             AppEvent::Tick => {
                 if app.has_background_work() {
                     app.tick_background_work();
+                } else if app.is_history_stats_screen() && app.history_stats().is_loading() {
+                    app.tick_history_stats();
                 } else {
                     should_draw = false;
                 }
@@ -145,14 +151,32 @@ fn run_event_loop(
                             break;
                         }
                         Some(event::KeyAction::Edit) => {
-                            let before = logging::task_snapshots(app.tabs());
-                            edit_tasks(paths, terminal, app, editors)?;
-                            log_task_changes(
-                                logger,
-                                app,
-                                &before,
-                                logging::TaskChangeCause::TaskFileRead,
-                            );
+                            if app.is_history_stats_screen() {
+                                app.set_message("統計画面では編集できません");
+                                should_persist = false;
+                            } else {
+                                let before = logging::task_snapshots(app.tabs());
+                                edit_tasks(paths, terminal, app, editors)?;
+                                log_task_changes(
+                                    logger,
+                                    app,
+                                    &before,
+                                    logging::TaskChangeCause::TaskFileRead,
+                                );
+                            }
+                        }
+                        Some(event::KeyAction::Stats) => {
+                            if app.toggle_history_stats_screen() {
+                                history_stats::spawn_history_stats(
+                                    runtime.tx.clone(),
+                                    paths.clone(),
+                                );
+                            }
+                            should_persist = false;
+                        }
+                        _ if app.is_history_stats_screen() => {
+                            app.handle_key(key, keybindings);
+                            should_persist = false;
                         }
                         _ => match reload_tasks(paths, app) {
                             Ok(()) => {
@@ -190,7 +214,7 @@ fn run_event_loop(
                 let before_tabs = app.tabs().to_vec();
                 let before = logging::task_snapshots(app.tabs());
                 match reload_tasks(paths, app) {
-                    Ok(()) if tabs_differ(&before_tabs, app.tabs()) => {
+                    Ok(()) if task_diff::tabs_differ(&before_tabs, app.tabs()) => {
                         app.set_message("tasks/をhot reloadしました");
                     }
                     Ok(()) => {}
@@ -219,14 +243,21 @@ fn run_event_loop(
                         &mut should_persist,
                     );
                 }
+                if !app.has_background_work() && app.start_history_stats_prefetch() {
+                    history_stats::spawn_history_stats(runtime.tx.clone(), paths.clone());
+                }
             }
             AppEvent::DayChangeGitFinished(result) => {
                 pending_day_change = false;
                 app.finish_background_work();
                 match result {
-                    Ok(message) => finish_day_change(paths, app, logger, Some(&message)),
+                    Ok(message) => finish_day_change(app, logger, Some(&message)),
                     Err(err) => app.set_message(format!("日付変更前git snapshot: {err}")),
                 }
+            }
+            AppEvent::HistoryStatsFinished(result) => {
+                should_persist = false;
+                app.finish_history_stats(result);
             }
         }
         if should_persist {
@@ -247,6 +278,7 @@ fn event_should_persist(event: &AppEvent) -> bool {
             | AppEvent::Tick
             | AppEvent::BackgroundWorkMessage(_)
             | AppEvent::StartupGitFinished(_)
+            | AppEvent::HistoryStatsFinished(_)
     )
 }
 
@@ -270,19 +302,14 @@ fn handle_day_changed(
                 app.current_date,
             );
         }
-        Ok(()) => finish_day_change(paths, app, logger, None),
+        Ok(()) => finish_day_change(app, logger, None),
         Err(err) => app.set_message(err),
     }
 }
 
-fn finish_day_change(
-    paths: &storage::AppPaths,
-    app: &mut App,
-    logger: &logging::AppLogger,
-    snapshot_message: Option<&str>,
-) {
+fn finish_day_change(app: &mut App, logger: &logging::AppLogger, snapshot_message: Option<&str>) {
     let before = logging::task_snapshots(app.tabs());
-    app.complete_day(&paths.records_dir, clock::today_jst());
+    app.complete_day(clock::today_jst());
     log_task_changes(logger, app, &before, logging::TaskChangeCause::DayChanged);
     match snapshot_message {
         Some(message) => app.set_message(format!(
@@ -410,25 +437,4 @@ fn task_lists_from_files(task_files: &[storage::TaskFile]) -> Vec<TaskList> {
             tasks: task_file.task.clone(),
         })
         .collect()
-}
-
-fn tabs_differ(before: &[TaskTab], after: &[TaskTab]) -> bool {
-    before.len() != after.len()
-        || before.iter().zip(after).any(|(before, after)| {
-            before.label != after.label
-                || before.path != after.path
-                || tasks_differ(&before.tasks, &after.tasks)
-        })
-}
-
-fn tasks_differ(before: &[DailyTask], after: &[DailyTask]) -> bool {
-    before.len() != after.len()
-        || before.iter().zip(after).any(|(before, after)| {
-            before.name != after.name
-                || before.order != after.order
-                || before.source_line != after.source_line
-                || before.state != after.state
-                || before.started_at != after.started_at
-                || before.completed_at != after.completed_at
-        })
 }

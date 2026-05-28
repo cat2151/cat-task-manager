@@ -3,15 +3,15 @@ use std::{fs, path::PathBuf};
 use super::{config, tasks, APP_NAME};
 
 const CONFIG_FILE_NAME: &str = "config.toml";
+const HISTORY_STATS_CACHE_FILE_NAME: &str = "history-stats-cache.json";
 const TASKS_DIR_NAME: &str = "tasks";
-const RECORDS_DIR_NAME: &str = "records";
 
 #[derive(Debug, Clone)]
 pub struct AppPaths {
     pub root_dir: PathBuf,
     pub config_path: PathBuf,
+    pub history_stats_cache_path: PathBuf,
     pub tasks_dir: PathBuf,
-    pub records_dir: PathBuf,
 }
 
 pub fn app_paths() -> Result<AppPaths, String> {
@@ -27,23 +27,19 @@ pub fn ensure_app_storage(paths: &AppPaths) -> Result<(), String> {
             paths.root_dir.display()
         )
     })?;
-    fs::create_dir_all(&paths.records_dir).map_err(|err| {
-        format!(
-            "records directory を作成できませんでした: {} ({err})",
-            paths.records_dir.display()
-        )
-    })?;
-
     config::ensure_config_file(&paths.config_path)?;
     tasks::ensure_tasks_dir(&paths.tasks_dir)
 }
 
 fn paths_from_local_app_data(local_app_data: impl Into<PathBuf>) -> AppPaths {
-    let root_dir = local_app_data.into().join(APP_NAME);
+    let local_app_data = local_app_data.into();
+    let root_dir = local_app_data.join(APP_NAME);
     AppPaths {
         config_path: root_dir.join(CONFIG_FILE_NAME),
+        history_stats_cache_path: local_app_data
+            .join(format!("{APP_NAME}-cache"))
+            .join(HISTORY_STATS_CACHE_FILE_NAME),
         tasks_dir: root_dir.join(TASKS_DIR_NAME),
-        records_dir: root_dir.join(RECORDS_DIR_NAME),
         root_dir,
     }
 }
@@ -65,12 +61,14 @@ mod tests {
             PathBuf::from(r"C:\Users\me\AppData\Local\cat-task-manager\config.toml")
         );
         assert_eq!(
-            paths.tasks_dir,
-            PathBuf::from(r"C:\Users\me\AppData\Local\cat-task-manager\tasks")
+            paths.history_stats_cache_path,
+            PathBuf::from(
+                r"C:\Users\me\AppData\Local\cat-task-manager-cache\history-stats-cache.json"
+            )
         );
         assert_eq!(
-            paths.records_dir,
-            PathBuf::from(r"C:\Users\me\AppData\Local\cat-task-manager\records")
+            paths.tasks_dir,
+            PathBuf::from(r"C:\Users\me\AppData\Local\cat-task-manager\tasks")
         );
     }
 }

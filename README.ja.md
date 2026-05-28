@@ -61,9 +61,8 @@
 `- [x]` で行末 JSON がないタスクは、検知した時刻を着手時刻と完了時刻として行末 JSON に正規化する。
 行末 JSON の形式が壊れていれば起動時や reload 時にエラーとして扱う。
 
-過去の記録だけは `records` に日付別で書き出す。
-これは当日の操作対象ではなく、日が終わった後の結果である。
-`tasks/*.md` の SSoT を崩さないため、当日の復元には使わない。
+過去データの統計は git 履歴に残った `tasks/*.md` から読む。
+タスク情報の永続状態は `tasks/*.md` だけに置く。
 
 画面は、次に扱うタスクへ集中しつつ、必要なときだけ全体も確認できるようにしている。
 起動直後は 1 行表示にし、`v` で 1 行、未完了、全体表示を切り替える。
@@ -108,6 +107,7 @@ right = "next_tab"
 h = "previous_tab"
 left = "previous_tab"
 v = "toggle_view"
+s = "stats"
 "?" = "help"
 ```
 
@@ -118,10 +118,9 @@ v = "toggle_view"
 ```text
 %LOCALAPPDATA%\cat-task-manager\config.toml
 %LOCALAPPDATA%\cat-task-manager\tasks\tasks.md
-%LOCALAPPDATA%\cat-task-manager\records\YYYY-MM-DD.toml
 ```
 
-`tasks/*.md` はユーザーとアプリが同じ対象を読み書きする SSoT。`config.toml` は操作環境の設定。`records` は過去結果の出力先として扱う。
+`tasks/*.md` はユーザーとアプリが同じ対象を読み書きする SSoT。`config.toml` は操作環境の設定。
 
 ## 割り切り
 

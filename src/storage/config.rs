@@ -3,7 +3,7 @@ use std::{collections::HashSet, fs, path::Path};
 use serde::{de::Error as _, Deserialize, Deserializer};
 
 const DEFAULT_EDITORS: [&str; 4] = ["fresh", "zed", "nvim", "code"];
-const DEFAULT_KEYBINDINGS: [(&str, &str); 16] = [
+const DEFAULT_KEYBINDINGS: [(&str, &str); 17] = [
     ("j", "next"),
     ("down", "next"),
     ("k", "previous"),
@@ -19,6 +19,7 @@ const DEFAULT_KEYBINDINGS: [(&str, &str); 16] = [
     ("h", "previous_tab"),
     ("left", "previous_tab"),
     ("v", "toggle_view"),
+    ("s", "stats"),
     ("?", "help"),
 ];
 const DEFAULT_CONFIG: &str = r#"editors = ["fresh", "zed", "nvim", "code"]
@@ -42,6 +43,7 @@ right = "next_tab"
 h = "previous_tab"
 left = "previous_tab"
 v = "toggle_view"
+s = "stats"
 "?" = "help"
 "#;
 
@@ -368,6 +370,7 @@ mod tests {
         assert_eq!(optional_keybinding(&path, "k"), None);
         assert_eq!(keybinding(&path, "enter"), "advance");
         assert_eq!(keybinding(&path, "d"), "defer");
+        assert_eq!(keybinding(&path, "s"), "stats");
 
         fs::remove_file(path).unwrap();
     }
@@ -382,6 +385,7 @@ mod tests {
         assert_eq!(keybinding(&path, "j"), "next");
         assert_eq!(keybinding(&path, "d"), "defer");
         assert_eq!(keybinding(&path, "right"), "next_tab");
+        assert_eq!(keybinding(&path, "s"), "stats");
         assert_eq!(keybinding(&path, "?"), "help");
 
         fs::remove_file(path).unwrap();
@@ -418,6 +422,7 @@ mod tests {
         assert_eq!(file.keybindings.get("space"), Some("advance"));
         assert_eq!(file.keybindings.get("d"), Some("defer"));
         assert_eq!(file.keybindings.get("right"), Some("next_tab"));
+        assert_eq!(file.keybindings.get("s"), Some("stats"));
         assert_eq!(file.keybindings.get("?"), Some("help"));
     }
 

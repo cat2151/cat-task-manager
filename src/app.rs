@@ -10,7 +10,9 @@ use crate::{
 
 mod actions;
 mod model;
+mod stats;
 pub use model::{DailyTask, TaskList, TaskState, TaskTab, ViewMode};
+pub use stats::{AppScreen, HistoryStatsState};
 
 const ALL_TAB_LABEL: &str = "all";
 const EMPTY_VISIBLE_TASKS_MESSAGE: &str = "表示対象のタスクはありません";
@@ -26,6 +28,8 @@ struct TaskLocation {
 pub struct App {
     pub tabs: Vec<TaskTab>,
     pub current_date: NaiveDate,
+    screen: AppScreen,
+    history_stats: HistoryStatsState,
     view_mode: ViewMode,
     selected_tab: usize,
     selected_visible: usize,
@@ -40,6 +44,8 @@ impl App {
         Self {
             tabs: task_lists.into_iter().map(task_tab_from_list).collect(),
             current_date,
+            screen: AppScreen::Tasks,
+            history_stats: HistoryStatsState::Idle,
             view_mode: ViewMode::OneLine,
             selected_tab: 0,
             selected_visible: 0,
@@ -59,6 +65,10 @@ impl App {
                 self.show_help = false;
                 self.message = "ヘルプを閉じました".to_string();
             }
+        } else if self.is_history_stats_screen() {
+            if action == Some(KeyAction::Stats) {
+                self.toggle_history_stats_screen();
+            }
         } else if let Some(action) = action {
             match action {
                 KeyAction::Next => self.select_next(),
@@ -69,6 +79,9 @@ impl App {
                 KeyAction::Hold => self.toggle_hold_selected(),
                 KeyAction::Defer => self.defer_selected(),
                 KeyAction::ToggleView => self.toggle_view_mode(),
+                KeyAction::Stats => {
+                    self.toggle_history_stats_screen();
+                }
                 KeyAction::Quit | KeyAction::Edit | KeyAction::Help => {}
             }
         }
@@ -220,8 +233,7 @@ impl App {
         self.clamp_selection();
     }
 
-    pub fn complete_day(&mut self, _records_dir: impl AsRef<Path>, new_date: NaiveDate) {
-        // records output is frozen while validating the date-change snapshot flow.
+    pub fn complete_day(&mut self, new_date: NaiveDate) {
         self.reset_for_new_day(new_date);
         self.message = format!("日付を更新しました: {new_date}");
     }

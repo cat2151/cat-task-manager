@@ -108,14 +108,28 @@ pub fn load_task_file(path: impl AsRef<Path>) -> Result<TaskFile, String> {
     let path = path.as_ref();
     let raw = fs::read_to_string(path)
         .map_err(|err| format!("tasks fileを読めませんでした: {} ({err})", path.display()))?;
-    let parsed = parse_task_file_content(&raw, clock::today_jst())?;
+    load_task_file_content(
+        task_file_label(path)?,
+        path.to_path_buf(),
+        &raw,
+        clock::today_jst(),
+    )
+}
+
+pub fn load_task_file_content(
+    label: impl Into<String>,
+    path: impl Into<PathBuf>,
+    raw: &str,
+    status_date: NaiveDate,
+) -> Result<TaskFile, String> {
+    let parsed = parse_task_file_content(raw, status_date)?;
     let mut tasks = parsed.tasks;
     validate_tasks(&tasks)?;
     assign_task_orders(&mut tasks);
 
     Ok(TaskFile {
-        label: task_file_label(path)?,
-        path: path.to_path_buf(),
+        label: label.into(),
+        path: path.into(),
         task: tasks,
         status: parsed.status,
     })
@@ -225,7 +239,7 @@ fn render_task_file_with_line_status(
         let completed_at = task.completed_at.as_ref().map(clock::format_rfc3339_jst);
         let status = LineStatusRecord {
             date,
-            state: task.state.record_value(),
+            state: task.state.status_value(),
             started_at: started_at.as_deref(),
             completed_at: completed_at.as_deref(),
         };

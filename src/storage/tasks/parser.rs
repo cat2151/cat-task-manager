@@ -210,7 +210,7 @@ fn parse_line_status(raw_status: RawLineStatus) -> Result<LineStatus, String> {
     })?;
 
     let task_state =
-        TaskState::from_record_value(&raw_status.state).unwrap_or(TaskState::NotStarted);
+        TaskState::from_status_value(&raw_status.state).unwrap_or(TaskState::NotStarted);
     let completed_at = if task_state == TaskState::Done {
         Some(
             parse_optional_time("completed_at", raw_status.completed_at)?

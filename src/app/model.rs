@@ -9,26 +9,16 @@ pub enum TaskState {
     NotStarted,
     InProgress,
     Done,
-    TimeOut,
     OnHold,
     Deferred,
 }
 
 impl TaskState {
-    #[allow(dead_code)]
-    pub fn on_day_changed(&self) -> Self {
-        match self {
-            TaskState::Done => TaskState::Done,
-            _ => TaskState::TimeOut,
-        }
-    }
-
     pub fn label(&self) -> &'static str {
         match self {
             TaskState::NotStarted => "未着手",
             TaskState::InProgress => "実施中",
             TaskState::Done => "完了",
-            TaskState::TimeOut => "時間切れ",
             TaskState::OnHold => "保留",
             TaskState::Deferred => "後回し",
         }

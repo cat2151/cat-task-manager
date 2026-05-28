@@ -43,6 +43,7 @@ fn keybindings_map_multiple_keys_to_one_action() {
         ("l", "next_tab"),
         ("h", "previous_tab"),
         ("v", "toggle_view"),
+        ("s", "stats"),
         ("?", "help"),
     ]))
     .unwrap();
@@ -77,6 +78,7 @@ fn duplicate_normalized_keybindings_are_rejected() {
         ("l", "next_tab"),
         ("h", "previous_tab"),
         ("v", "toggle_view"),
+        ("s", "stats"),
         ("?", "help"),
     ]))
     .unwrap_err();
@@ -96,6 +98,7 @@ fn unknown_keybinding_action_is_rejected() {
         ("l", "next_tab"),
         ("h", "previous_tab"),
         ("v", "toggle_view"),
+        ("s", "stats"),
         ("?", "help"),
     ]))
     .unwrap_err();
@@ -128,7 +131,8 @@ fn terminal_key_press_becomes_app_key_event() {
             | AppEvent::TasksChanged
             | AppEvent::BackgroundWorkMessage(_)
             | AppEvent::StartupGitFinished(_)
-            | AppEvent::DayChangeGitFinished(_),
+            | AppEvent::DayChangeGitFinished(_)
+            | AppEvent::HistoryStatsFinished(_),
         )
         | None => panic!("expected key press event"),
     }

@@ -74,7 +74,7 @@ impl App {
             TaskState::OnHold => {
                 self.message = "進める前に保留を解除してください".to_string();
             }
-            TaskState::Done | TaskState::TimeOut => {}
+            TaskState::Done => {}
         }
     }
 

@@ -11,6 +11,7 @@ use std::{
 
 use crate::{
     clock,
+    history_stats::HistoryStatsReport,
     storage::{self, KeyBindingsConfig},
 };
 
@@ -25,6 +26,7 @@ pub enum AppEvent {
     BackgroundWorkMessage(String),
     StartupGitFinished(Result<String, String>),
     DayChangeGitFinished(Result<String, String>),
+    HistoryStatsFinished(Result<HistoryStatsReport, String>),
 }
 
 #[derive(Debug, Clone)]
@@ -44,6 +46,7 @@ pub enum KeyAction {
     NextTab,
     PreviousTab,
     ToggleView,
+    Stats,
     Help,
 }
 
@@ -109,7 +112,7 @@ impl KeyBindings {
 }
 
 impl KeyAction {
-    pub const ALL: [Self; 11] = [
+    pub const ALL: [Self; 12] = [
         Self::Next,
         Self::Previous,
         Self::Advance,
@@ -120,6 +123,7 @@ impl KeyAction {
         Self::NextTab,
         Self::PreviousTab,
         Self::ToggleView,
+        Self::Stats,
         Self::Help,
     ];
 
@@ -135,9 +139,10 @@ impl KeyAction {
             "next_tab" => Ok(Self::NextTab),
             "previous_tab" => Ok(Self::PreviousTab),
             "toggle_view" => Ok(Self::ToggleView),
+            "stats" => Ok(Self::Stats),
             "help" => Ok(Self::Help),
             _ => Err(format!(
-                "未対応の keybinding action です: '{raw}'。next、previous、advance、hold、defer、quit、edit、next_tab、previous_tab、toggle_view、help を使ってください。"
+                "未対応の keybinding action です: '{raw}'。next、previous、advance、hold、defer、quit、edit、next_tab、previous_tab、toggle_view、stats、help を使ってください。"
             )),
         }
     }
@@ -154,6 +159,7 @@ impl KeyAction {
             Self::NextTab => "next_tab",
             Self::PreviousTab => "previous_tab",
             Self::ToggleView => "toggle_view",
+            Self::Stats => "stats",
             Self::Help => "help",
         }
     }

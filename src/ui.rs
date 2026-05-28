@@ -8,10 +8,12 @@ use ratatui::{
 };
 
 use crate::{
-    app::{App, DailyTask, TaskState, ViewMode},
+    app::{App, AppScreen, DailyTask, TaskState, ViewMode},
     event::{KeyAction, KeyBindings},
     storage::APP_NAME,
 };
+
+mod stats;
 
 const MONOKAI_BG: Color = Color::Rgb(39, 40, 34);
 const MONOKAI_FG: Color = Color::Rgb(248, 248, 242);
@@ -29,6 +31,17 @@ const ON_HOLD_ONE_LINE_NOTE: &str =
 
 pub fn draw(frame: &mut Frame, app: &App, keybindings: &KeyBindings) {
     frame.render_widget(Block::default().style(base_style()), frame.area());
+
+    if app.screen() == AppScreen::HistoryStats {
+        stats::draw(frame, app, keybindings);
+        if app.show_help() {
+            draw_help(frame, frame.area(), keybindings);
+        }
+        if app.has_background_work() {
+            draw_background_overlay(frame, frame.area(), app);
+        }
+        return;
+    }
 
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -216,6 +229,7 @@ fn help_lines(keybindings: &KeyBindings) -> Vec<Line<'static>> {
         help_line(keybindings.label_for(KeyAction::NextTab), "次のタブ"),
         help_line(keybindings.label_for(KeyAction::PreviousTab), "前のタブ"),
         help_line(keybindings.label_for(KeyAction::ToggleView), "表示切替"),
+        help_line(keybindings.label_for(KeyAction::Stats), "過去データ統計"),
         help_line(keybindings.label_for(KeyAction::Edit), "現在のタブのmd編集"),
         help_line(keybindings.label_for(KeyAction::Quit), "終了"),
         help_line(keybindings.label_for(KeyAction::Help), "help 表示/閉じる"),
