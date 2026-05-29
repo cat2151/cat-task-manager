@@ -351,7 +351,10 @@ fn completed_work_duration(task: &DailyTask) -> Option<Duration> {
 }
 
 fn format_work_duration(duration: Duration) -> String {
-    let total_seconds = duration.num_seconds();
+    format_elapsed_seconds(duration.num_seconds())
+}
+
+fn format_elapsed_seconds(total_seconds: i64) -> String {
     if total_seconds < 60 {
         return format!("{total_seconds}秒");
     }

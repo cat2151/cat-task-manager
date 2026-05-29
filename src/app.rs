@@ -30,6 +30,7 @@ pub struct App {
     pub current_date: NaiveDate,
     screen: AppScreen,
     history_stats: HistoryStatsState,
+    history_stats_selected: usize,
     view_mode: ViewMode,
     selected_tab: usize,
     selected_visible: usize,
@@ -46,6 +47,7 @@ impl App {
             current_date,
             screen: AppScreen::Tasks,
             history_stats: HistoryStatsState::Idle,
+            history_stats_selected: 0,
             view_mode: ViewMode::OneLine,
             selected_tab: 0,
             selected_visible: 0,
@@ -66,9 +68,7 @@ impl App {
                 self.message = "ヘルプを閉じました".to_string();
             }
         } else if self.is_history_stats_screen() {
-            if action == Some(KeyAction::Stats) {
-                self.toggle_history_stats_screen();
-            }
+            self.handle_history_stats_key(key, action);
         } else if let Some(action) = action {
             match action {
                 KeyAction::Next => self.select_next(),

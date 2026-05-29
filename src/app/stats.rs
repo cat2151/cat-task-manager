@@ -1,4 +1,6 @@
-use crate::history_stats::HistoryStatsReport;
+use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+
+use crate::{event::KeyAction, history_stats::HistoryStatsReport};
 
 use super::App;
 
@@ -33,6 +35,24 @@ impl App {
 
     pub fn history_stats(&self) -> &HistoryStatsState {
         &self.history_stats
+    }
+
+    pub fn selected_history_stats_task(&self) -> Option<usize> {
+        let count = self.history_stats_task_count();
+        (count > 0).then(|| self.history_stats_selected.min(count - 1))
+    }
+
+    pub(super) fn handle_history_stats_key(&mut self, key: KeyEvent, action: Option<KeyAction>) {
+        match action {
+            Some(KeyAction::Stats) => {
+                self.toggle_history_stats_screen();
+            }
+            Some(KeyAction::Next) => self.select_next_history_stats_task(),
+            Some(KeyAction::Previous) => self.select_previous_history_stats_task(),
+            _ if plain_char_key(key, 'j') => self.select_next_history_stats_task(),
+            _ if plain_char_key(key, 'k') => self.select_previous_history_stats_task(),
+            _ => {}
+        }
     }
 
     pub fn tick_history_stats(&mut self) {
@@ -82,6 +102,7 @@ impl App {
         }
 
         self.history_stats = HistoryStatsState::Loading;
+        self.history_stats_selected = 0;
         self.spinner_frame = 0;
         if update_message {
             self.message = "過去データ統計を取得中です".to_string();
@@ -99,25 +120,66 @@ impl App {
                     "過去データ統計を取得しました"
                 };
                 self.history_stats = HistoryStatsState::Ready(report);
+                self.clamp_history_stats_selection();
                 if update_message {
                     self.message = message.to_string();
                 }
             }
             Err(err) => {
                 self.history_stats = HistoryStatsState::Error(err);
+                self.history_stats_selected = 0;
                 if update_message {
                     self.message = "過去データ統計の取得に失敗しました".to_string();
                 }
             }
         }
     }
+
+    fn select_next_history_stats_task(&mut self) {
+        let count = self.history_stats_task_count();
+        if count == 0 {
+            self.history_stats_selected = 0;
+        } else {
+            self.history_stats_selected = (self.history_stats_selected + 1).min(count - 1);
+        }
+    }
+
+    fn select_previous_history_stats_task(&mut self) {
+        self.history_stats_selected = self.history_stats_selected.saturating_sub(1);
+    }
+
+    fn clamp_history_stats_selection(&mut self) {
+        let count = self.history_stats_task_count();
+        if count == 0 {
+            self.history_stats_selected = 0;
+        } else {
+            self.history_stats_selected = self.history_stats_selected.min(count - 1);
+        }
+    }
+
+    fn history_stats_task_count(&self) -> usize {
+        match &self.history_stats {
+            HistoryStatsState::Ready(report) => report.task_counts.len(),
+            _ => 0,
+        }
+    }
+}
+
+fn plain_char_key(key: KeyEvent, target: char) -> bool {
+    key.kind == KeyEventKind::Press
+        && key.modifiers == KeyModifiers::empty()
+        && key.code == KeyCode::Char(target)
 }
 
 #[cfg(test)]
 mod tests {
     use chrono::NaiveDate;
 
-    use crate::history_stats::{HistoryStatsReport, TaskNameCount};
+    use crate::{
+        event::KeyBindings,
+        history_stats::{HistoryStatsReport, TaskNameCount},
+        storage::KeyBindingsConfig,
+    };
 
     use super::*;
 
@@ -126,14 +188,19 @@ mod tests {
     }
 
     fn report() -> HistoryStatsReport {
+        report_with_tasks(vec![TaskNameCount {
+            name: "a".to_string(),
+            count: 1,
+        }])
+    }
+
+    fn report_with_tasks(task_counts: Vec<TaskNameCount>) -> HistoryStatsReport {
         HistoryStatsReport {
             scanned_revisions: 1,
             skipped_files: 0,
             timed_out: false,
-            task_counts: vec![TaskNameCount {
-                name: "a".to_string(),
-                count: 1,
-            }],
+            recent_task_duration: None,
+            task_counts,
         }
     }
 
@@ -167,5 +234,36 @@ mod tests {
         assert!(app.toggle_history_stats_screen());
 
         assert!(app.history_stats().is_loading());
+    }
+
+    #[test]
+    fn history_stats_screen_scrolls_task_counts_with_jk() {
+        let mut app = app();
+        let keybindings = KeyBindings::from_config(KeyBindingsConfig::default()).unwrap();
+        app.finish_history_stats(Ok(report_with_tasks(vec![
+            TaskNameCount {
+                name: "a".to_string(),
+                count: 3,
+            },
+            TaskNameCount {
+                name: "b".to_string(),
+                count: 2,
+            },
+        ])));
+        app.toggle_history_stats_screen();
+
+        app.handle_key(
+            KeyEvent::new(KeyCode::Char('j'), KeyModifiers::empty()),
+            &keybindings,
+        );
+
+        assert_eq!(app.selected_history_stats_task(), Some(1));
+
+        app.handle_key(
+            KeyEvent::new(KeyCode::Char('k'), KeyModifiers::empty()),
+            &keybindings,
+        );
+
+        assert_eq!(app.selected_history_stats_task(), Some(0));
     }
 }
