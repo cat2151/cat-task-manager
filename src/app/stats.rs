@@ -191,6 +191,7 @@ mod tests {
         report_with_tasks(vec![TaskNameCount {
             name: "a".to_string(),
             count: 1,
+            typical_task_duration: None,
         }])
     }
 
@@ -199,7 +200,7 @@ mod tests {
             scanned_revisions: 1,
             skipped_files: 0,
             timed_out: false,
-            recent_task_duration: None,
+            typical_task_duration: None,
             task_counts,
         }
     }
@@ -244,10 +245,12 @@ mod tests {
             TaskNameCount {
                 name: "a".to_string(),
                 count: 3,
+                typical_task_duration: None,
             },
             TaskNameCount {
                 name: "b".to_string(),
                 count: 2,
+                typical_task_duration: None,
             },
         ])));
         app.toggle_history_stats_screen();

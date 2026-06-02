@@ -16,10 +16,10 @@ use crate::{
     storage::{self, AppPaths},
 };
 
-mod recent;
-pub use recent::RecentTaskDuration;
+mod typical;
+pub use typical::TypicalTaskDuration;
 
-const HISTORY_STATS_CACHE_VERSION: u32 = 3;
+const HISTORY_STATS_CACHE_VERSION: u32 = 4;
 const HISTORY_STATS_TIMEOUT: StdDuration = StdDuration::from_secs(60);
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -27,7 +27,7 @@ pub struct HistoryStatsReport {
     pub scanned_revisions: usize,
     pub skipped_files: usize,
     pub timed_out: bool,
-    pub recent_task_duration: Option<RecentTaskDuration>,
+    pub typical_task_duration: Option<TypicalTaskDuration>,
     pub task_counts: Vec<TaskNameCount>,
 }
 
@@ -35,6 +35,7 @@ pub struct HistoryStatsReport {
 pub struct TaskNameCount {
     pub name: String,
     pub count: usize,
+    pub typical_task_duration: Option<TypicalTaskDuration>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -51,7 +52,7 @@ enum CommandOutcome {
 
 struct RawTaskStats {
     task_names: Vec<String>,
-    recent_task_duration: Option<recent::RecentTaskDurationCandidate>,
+    task_duration_candidates: Vec<typical::TaskDurationCandidate>,
 }
 
 pub fn spawn_history_stats(tx: Sender<AppEvent>, paths: AppPaths) {
@@ -111,7 +112,13 @@ fn collect_history_stats(root_dir: &Path) -> Result<HistoryStatsReport, String> 
     let Some(revisions_stdout) =
         git_stdout(root_dir, &["log", "--format=%H", "--", "tasks"], deadline)?
     else {
-        return Ok(report_from_counts(HashMap::new(), None, 0, 0, true));
+        return Ok(report_from_counts(
+            HashMap::new(),
+            HashSet::new(),
+            0,
+            0,
+            true,
+        ));
     };
     let revisions = revisions_stdout
         .lines()
@@ -121,7 +128,7 @@ fn collect_history_stats(root_dir: &Path) -> Result<HistoryStatsReport, String> 
         .collect::<Vec<_>>();
 
     let mut task_counts = HashMap::new();
-    let mut recent_task_duration = None;
+    let mut task_duration_candidates = HashSet::new();
     let mut scanned_revisions = 0;
     let mut skipped_files = 0;
     let mut timed_out = false;
@@ -160,15 +167,7 @@ fn collect_history_stats(root_dir: &Path) -> Result<HistoryStatsReport, String> 
                     for task_name in stats.task_names {
                         revision_tasks.insert(task_name);
                     }
-                    if let Some(recent) = stats.recent_task_duration {
-                        let replace = match &recent_task_duration {
-                            Some(current) => recent.completed_after(current),
-                            None => true,
-                        };
-                        if replace {
-                            recent_task_duration = Some(recent);
-                        }
-                    }
+                    task_duration_candidates.extend(stats.task_duration_candidates);
                 }
                 Err(_) => skipped_files += 1,
             }
@@ -183,7 +182,7 @@ fn collect_history_stats(root_dir: &Path) -> Result<HistoryStatsReport, String> 
 
     Ok(report_from_counts(
         task_counts,
-        recent_task_duration,
+        task_duration_candidates,
         scanned_revisions,
         skipped_files,
         timed_out,
@@ -192,17 +191,18 @@ fn collect_history_stats(root_dir: &Path) -> Result<HistoryStatsReport, String> 
 
 fn report_from_counts(
     task_counts: HashMap<String, usize>,
-    recent_task_duration: Option<recent::RecentTaskDurationCandidate>,
+    task_duration_candidates: HashSet<typical::TaskDurationCandidate>,
     scanned_revisions: usize,
     skipped_files: usize,
     timed_out: bool,
 ) -> HistoryStatsReport {
+    let typical_task_durations = typical::summarize(&task_duration_candidates);
     HistoryStatsReport {
         scanned_revisions,
         skipped_files,
         timed_out,
-        recent_task_duration: recent_task_duration.map(|recent| recent.into_report()),
-        task_counts: sorted_task_counts(task_counts),
+        typical_task_duration: typical_task_durations.overall(),
+        task_counts: sorted_task_counts(task_counts, &typical_task_durations),
     }
 }
 
@@ -212,10 +212,17 @@ fn add_revision_tasks(task_counts: &mut HashMap<String, usize>, revision_tasks: 
     }
 }
 
-fn sorted_task_counts(task_counts: HashMap<String, usize>) -> Vec<TaskNameCount> {
+fn sorted_task_counts(
+    task_counts: HashMap<String, usize>,
+    typical_task_durations: &typical::TypicalTaskDurations,
+) -> Vec<TaskNameCount> {
     let mut counts = task_counts
         .into_iter()
-        .map(|(name, count)| TaskNameCount { name, count })
+        .map(|(name, count)| TaskNameCount {
+            typical_task_duration: typical_task_durations.for_task(&name),
+            name,
+            count,
+        })
         .collect::<Vec<_>>();
     counts.sort_by(|left, right| {
         right
@@ -240,11 +247,11 @@ fn task_stats_from_raw(task_path: &str, raw: &str) -> Result<RawTaskStats, Strin
         raw,
         clock::today_jst(),
     )?;
-    let recent_task_duration = recent::candidate_from_task_file(&file);
+    let task_duration_candidates = typical::candidates_from_task_file(&file);
     let task_names = file.task.into_iter().map(|task| task.name).collect();
     Ok(RawTaskStats {
         task_names,
-        recent_task_duration,
+        task_duration_candidates,
     })
 }
 
@@ -324,81 +331,4 @@ fn output_summary(output: &Output) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn report() -> HistoryStatsReport {
-        HistoryStatsReport {
-            scanned_revisions: 2,
-            skipped_files: 0,
-            timed_out: false,
-            recent_task_duration: None,
-            task_counts: vec![TaskNameCount {
-                name: "朝食をいただく".to_string(),
-                count: 2,
-            }],
-        }
-    }
-
-    fn cache_path(name: &str) -> PathBuf {
-        std::env::temp_dir().join(format!(
-            "cat-task-manager-{name}-{}-history-stats-cache.json",
-            std::process::id()
-        ))
-    }
-
-    #[test]
-    fn cached_history_stats_round_trips_for_matching_head() {
-        let path = cache_path("matching-head");
-        let report = report();
-
-        write_cached_history_stats(&path, "head-a", &report);
-
-        assert_eq!(read_cached_history_stats(&path, "head-a"), Some(report));
-        let _ = fs::remove_file(path);
-    }
-
-    #[test]
-    fn cached_history_stats_ignores_other_head() {
-        let path = cache_path("other-head");
-
-        write_cached_history_stats(&path, "head-a", &report());
-
-        assert_eq!(read_cached_history_stats(&path, "head-b"), None);
-        let _ = fs::remove_file(path);
-    }
-
-    #[test]
-    fn sorted_task_counts_orders_by_count_then_name_without_limit() {
-        let mut counts = HashMap::new();
-        for index in 0..12 {
-            counts.insert(format!("task {index:02}"), index);
-        }
-        counts.insert("aaa".to_string(), 11);
-
-        let sorted = sorted_task_counts(counts);
-
-        assert_eq!(sorted.len(), 13);
-        assert_eq!(sorted[0].name, "aaa");
-        assert_eq!(sorted[0].count, 11);
-        assert_eq!(sorted[1].name, "task 11");
-        assert_eq!(sorted[12].name, "task 00");
-    }
-
-    #[test]
-    fn add_revision_tasks_counts_each_task_once_per_revision() {
-        let mut counts = HashMap::new();
-
-        add_revision_tasks(
-            &mut counts,
-            HashSet::from(["朝食をいただく".to_string(), "散歩".to_string()]),
-        );
-        add_revision_tasks(
-            &mut counts,
-            HashSet::from(["朝食をいただく".to_string(), "朝食をいただく".to_string()]),
-        );
-
-        assert_eq!(counts.get("朝食をいただく"), Some(&2));
-        assert_eq!(counts.get("散歩"), Some(&1));
-    }
-}
+mod tests;

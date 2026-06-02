@@ -8,7 +8,7 @@ use ratatui::{
 use crate::{
     app::{App, HistoryStatsState},
     event::{KeyAction, KeyBindings},
-    history_stats::HistoryStatsReport,
+    history_stats::{HistoryStatsReport, TaskNameCount},
     storage::APP_NAME,
 };
 
@@ -59,7 +59,7 @@ fn draw_report(frame: &mut Frame, area: Rect, app: &App, report: &HistoryStatsRe
     frame.render_widget(block, area);
 
     render_line(frame, inner, 0, summary_line(report));
-    render_line(frame, inner, 1, recent_task_duration_line(report));
+    render_line(frame, inner, 1, typical_task_duration_line(report));
 
     let task_area = offset_area(inner, 3);
     if report.task_counts.is_empty() {
@@ -72,16 +72,7 @@ fn draw_report(frame: &mut Frame, area: Rect, app: &App, report: &HistoryStatsRe
             .task_counts
             .iter()
             .enumerate()
-            .map(|(index, task)| {
-                ListItem::new(Line::from(vec![
-                    Span::styled(format!("{:>2}. ", index + 1), fg_style(MONOKAI_COMMENT)),
-                    Span::styled(
-                        format!("{:>4}回  ", task.count),
-                        emphasized_style(MONOKAI_YELLOW),
-                    ),
-                    Span::styled(task.name.clone(), base_style()),
-                ]))
-            })
+            .map(|(index, task)| ListItem::new(task_count_line(index, task)))
             .collect::<Vec<_>>();
         let mut state = ListState::default();
         state.select(app.selected_history_stats_task());
@@ -92,6 +83,24 @@ fn draw_report(frame: &mut Frame, area: Rect, app: &App, report: &HistoryStatsRe
 
         frame.render_stateful_widget(list, task_area, &mut state);
     }
+}
+
+fn task_count_line(index: usize, task: &TaskNameCount) -> Line<'static> {
+    let duration = task
+        .typical_task_duration
+        .as_ref()
+        .map(|duration| format_elapsed_seconds(duration.elapsed_seconds))
+        .unwrap_or_else(|| "なし".to_string());
+    Line::from(vec![
+        Span::styled(format!("{:>2}. ", index + 1), fg_style(MONOKAI_COMMENT)),
+        Span::styled(
+            format!("{:>4}回  ", task.count),
+            emphasized_style(MONOKAI_YELLOW),
+        ),
+        Span::styled("目安 ", fg_style(MONOKAI_BLUE)),
+        Span::styled(format!("{duration:<8}"), emphasized_style(MONOKAI_GREEN)),
+        Span::styled(task.name.clone(), base_style()),
+    ])
 }
 
 fn render_line(frame: &mut Frame, area: Rect, line_index: u16, line: Line<'static>) {
@@ -112,16 +121,16 @@ fn offset_area(area: Rect, y_offset: u16) -> Rect {
     )
 }
 
-fn recent_task_duration_line(report: &HistoryStatsReport) -> Line<'static> {
-    let Some(duration) = &report.recent_task_duration else {
+fn typical_task_duration_line(report: &HistoryStatsReport) -> Line<'static> {
+    let Some(duration) = &report.typical_task_duration else {
         return Line::from(Span::styled(
-            "直近の所要時間 なし",
+            "目安の所要時間 なし",
             fg_style(MONOKAI_COMMENT),
         ));
     };
 
     Line::from(vec![
-        Span::styled("直近の所要時間 ", fg_style(MONOKAI_BLUE)),
+        Span::styled("目安の所要時間 ", fg_style(MONOKAI_BLUE)),
         Span::styled(
             format_elapsed_seconds(duration.elapsed_seconds),
             emphasized_style(MONOKAI_GREEN),
@@ -188,7 +197,7 @@ fn themed_block(title: &'static str) -> Block<'static> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::history_stats::RecentTaskDuration;
+    use crate::history_stats::TypicalTaskDuration;
 
     fn line_text(line: &Line<'_>) -> String {
         line.spans
@@ -198,19 +207,34 @@ mod tests {
     }
 
     #[test]
-    fn recent_task_duration_line_shows_duration() {
+    fn typical_task_duration_line_shows_duration() {
         let report = HistoryStatsReport {
             scanned_revisions: 1,
             skipped_files: 0,
             timed_out: false,
-            recent_task_duration: Some(RecentTaskDuration {
+            typical_task_duration: Some(TypicalTaskDuration {
                 elapsed_seconds: 30 * 60,
             }),
             task_counts: Vec::new(),
         };
 
-        let text = line_text(&recent_task_duration_line(&report));
+        let text = line_text(&typical_task_duration_line(&report));
 
-        assert_eq!(text, "直近の所要時間 30分");
+        assert_eq!(text, "目安の所要時間 30分");
+    }
+
+    #[test]
+    fn task_count_line_shows_typical_duration() {
+        let task = TaskNameCount {
+            name: "朝食をいただく".to_string(),
+            count: 3,
+            typical_task_duration: Some(TypicalTaskDuration {
+                elapsed_seconds: 30 * 60,
+            }),
+        };
+
+        let text = line_text(&task_count_line(0, &task));
+
+        assert_eq!(text, " 1.    3回  目安 30分     朝食をいただく");
     }
 }
