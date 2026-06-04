@@ -5,7 +5,6 @@ fn report() -> HistoryStatsReport {
         scanned_revisions: 2,
         skipped_files: 0,
         timed_out: false,
-        typical_task_duration: None,
         task_counts: vec![TaskNameCount {
             name: "朝食をいただく".to_string(),
             count: 2,

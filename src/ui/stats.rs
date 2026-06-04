@@ -61,9 +61,8 @@ fn draw_report(frame: &mut Frame, area: Rect, app: &App, report: &HistoryStatsRe
     frame.render_widget(block, area);
 
     render_line(frame, inner, 0, summary_line(report));
-    render_line(frame, inner, 1, typical_task_duration_line(report));
 
-    let task_area = offset_area(inner, 3);
+    let task_area = offset_area(inner, 2);
     if report.task_counts.is_empty() {
         frame.render_widget(
             Paragraph::new("taskは見つかりませんでした").style(base_style()),
@@ -121,23 +120,6 @@ fn offset_area(area: Rect, y_offset: u16) -> Rect {
         area.width,
         area.height.saturating_sub(y_offset),
     )
-}
-
-fn typical_task_duration_line(report: &HistoryStatsReport) -> Line<'static> {
-    let Some(duration) = &report.typical_task_duration else {
-        return Line::from(Span::styled(
-            "目安の所要時間 なし",
-            fg_style(MONOKAI_COMMENT),
-        ));
-    };
-
-    Line::from(vec![
-        Span::styled("目安の所要時間 ", fg_style(MONOKAI_BLUE)),
-        Span::styled(
-            format_stats_duration_minutes(duration.elapsed_seconds),
-            emphasized_style(MONOKAI_GREEN),
-        ),
-    ])
 }
 
 fn summary_line(report: &HistoryStatsReport) -> Line<'static> {
@@ -211,23 +193,6 @@ mod tests {
             .iter()
             .map(|span| span.content.as_ref())
             .collect()
-    }
-
-    #[test]
-    fn typical_task_duration_line_shows_duration() {
-        let report = HistoryStatsReport {
-            scanned_revisions: 1,
-            skipped_files: 0,
-            timed_out: false,
-            typical_task_duration: Some(TypicalTaskDuration {
-                elapsed_seconds: 30 * 60,
-            }),
-            task_counts: Vec::new(),
-        };
-
-        let text = line_text(&typical_task_duration_line(&report));
-
-        assert_eq!(text, "目安の所要時間 30min");
     }
 
     #[test]

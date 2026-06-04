@@ -200,7 +200,6 @@ mod tests {
             scanned_revisions: 1,
             skipped_files: 0,
             timed_out: false,
-            typical_task_duration: None,
             task_counts,
         }
     }

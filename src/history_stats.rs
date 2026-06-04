@@ -19,7 +19,7 @@ use crate::{
 mod typical;
 pub use typical::TypicalTaskDuration;
 
-const HISTORY_STATS_CACHE_VERSION: u32 = 4;
+const HISTORY_STATS_CACHE_VERSION: u32 = 5;
 const HISTORY_STATS_TIMEOUT: StdDuration = StdDuration::from_secs(60);
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -27,7 +27,6 @@ pub struct HistoryStatsReport {
     pub scanned_revisions: usize,
     pub skipped_files: usize,
     pub timed_out: bool,
-    pub typical_task_duration: Option<TypicalTaskDuration>,
     pub task_counts: Vec<TaskNameCount>,
 }
 
@@ -201,7 +200,6 @@ fn report_from_counts(
         scanned_revisions,
         skipped_files,
         timed_out,
-        typical_task_duration: typical_task_durations.overall(),
         task_counts: sorted_task_counts(task_counts, &typical_task_durations),
     }
 }

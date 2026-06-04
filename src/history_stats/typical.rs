@@ -22,15 +22,10 @@ pub(crate) struct TaskDurationCandidate {
 
 #[derive(Debug, Default)]
 pub(crate) struct TypicalTaskDurations {
-    overall: Option<TypicalTaskDuration>,
     by_task: HashMap<String, TypicalTaskDuration>,
 }
 
 impl TypicalTaskDurations {
-    pub(crate) fn overall(&self) -> Option<TypicalTaskDuration> {
-        self.overall.clone()
-    }
-
     pub(crate) fn for_task(&self, task_name: &str) -> Option<TypicalTaskDuration> {
         self.by_task.get(task_name).cloned()
     }
@@ -69,7 +64,6 @@ pub(crate) fn summarize<'a>(
             .push(candidate);
     }
 
-    let mut accepted_candidates = Vec::new();
     let mut by_task = HashMap::new();
     for (task_name, task_candidates) in candidates_by_task {
         let accepted = remove_outliers(&task_candidates);
@@ -77,14 +71,9 @@ pub(crate) fn summarize<'a>(
             continue;
         }
         by_task.insert(task_name.to_string(), representative_duration(&accepted));
-        accepted_candidates.extend(accepted);
     }
 
-    TypicalTaskDurations {
-        overall: (!accepted_candidates.is_empty())
-            .then(|| representative_duration(&accepted_candidates)),
-        by_task,
-    }
+    TypicalTaskDurations { by_task }
 }
 
 fn candidate_from_task_status(
@@ -229,7 +218,6 @@ mod tests {
         let candidates = candidates_from_task_file(&file);
         let summary = summarize(&candidates);
 
-        assert_eq!(summary.overall().unwrap().elapsed_seconds, 17 * 60 + 30);
         assert_eq!(summary.for_task("a").unwrap().elapsed_seconds, 5 * 60);
         assert_eq!(summary.for_task("b").unwrap().elapsed_seconds, 30 * 60);
     }
@@ -281,7 +269,6 @@ mod tests {
 
         let summary = summarize(&candidates);
 
-        assert_eq!(summary.overall().unwrap().elapsed_seconds, 11 * 60);
         assert_eq!(summary.for_task("a").unwrap().elapsed_seconds, 11 * 60);
     }
 
@@ -302,7 +289,7 @@ mod tests {
 
         let summary = summarize(&candidates);
 
-        assert_eq!(summary.overall().unwrap().elapsed_seconds, 5 * 60 * 60 + 30);
+        assert_eq!(summary.for_task("short").unwrap().elapsed_seconds, 60);
         assert_eq!(
             summary.for_task("long").unwrap().elapsed_seconds,
             10 * 60 * 60
