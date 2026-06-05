@@ -13,11 +13,10 @@ use crate::{
 };
 
 use super::{
-    base_style, emphasized_style, fg_style, spinner, MONOKAI_BLUE, MONOKAI_COMMENT, MONOKAI_GREEN,
-    MONOKAI_ORANGE, MONOKAI_SELECTION, MONOKAI_YELLOW,
+    base_style, duration::format_elapsed_seconds, emphasized_style, fg_style, spinner,
+    MONOKAI_BLUE, MONOKAI_COMMENT, MONOKAI_GREEN, MONOKAI_ORANGE, MONOKAI_SELECTION,
+    MONOKAI_YELLOW,
 };
-
-const MAX_STATS_DURATION_MINUTES: i64 = 999;
 
 pub(super) fn draw(frame: &mut Frame, app: &App, keybindings: &KeyBindings) {
     let chunks = Layout::default()
@@ -90,7 +89,7 @@ fn task_count_line(index: usize, task: &TaskNameCount) -> Line<'static> {
     let duration = task
         .typical_task_duration
         .as_ref()
-        .map(|duration| format_stats_duration_minutes(duration.elapsed_seconds))
+        .map(|duration| format_elapsed_seconds(duration.elapsed_seconds))
         .unwrap_or_else(|| "なし".to_string());
     Line::from(vec![
         Span::styled(format!("{:>2}. ", index + 1), fg_style(MONOKAI_COMMENT)),
@@ -134,11 +133,6 @@ fn summary_line(report: &HistoryStatsReport) -> Line<'static> {
             fg_style(MONOKAI_ORANGE),
         ),
     ])
-}
-
-fn format_stats_duration_minutes(total_seconds: i64) -> String {
-    let minutes = (total_seconds / 60).clamp(0, MAX_STATS_DURATION_MINUTES);
-    format!("{minutes}min")
 }
 
 fn draw_message(frame: &mut Frame, area: Rect, message: &str) {
@@ -207,14 +201,6 @@ mod tests {
 
         let text = line_text(&task_count_line(0, &task));
 
-        assert_eq!(text, " 1.    3回  目安  30min  朝食をいただく");
-    }
-
-    #[test]
-    fn stats_duration_minutes_are_clamped_and_truncated() {
-        assert_eq!(format_stats_duration_minutes(-1), "0min");
-        assert_eq!(format_stats_duration_minutes(59), "0min");
-        assert_eq!(format_stats_duration_minutes(60), "1min");
-        assert_eq!(format_stats_duration_minutes(1000 * 60), "999min");
+        assert_eq!(text, " 1.    3回  目安    30分  朝食をいただく");
     }
 }

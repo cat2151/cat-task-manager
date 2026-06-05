@@ -42,6 +42,19 @@ impl App {
         (count > 0).then(|| self.history_stats_selected.min(count - 1))
     }
 
+    pub fn typical_task_duration_seconds(&self, task_name: &str) -> Option<i64> {
+        let HistoryStatsState::Ready(report) = &self.history_stats else {
+            return None;
+        };
+
+        report
+            .task_counts
+            .iter()
+            .find(|task| task.name == task_name)
+            .and_then(|task| task.typical_task_duration.as_ref())
+            .map(|duration| duration.elapsed_seconds)
+    }
+
     pub(super) fn handle_history_stats_key(&mut self, key: KeyEvent, action: Option<KeyAction>) {
         match action {
             Some(KeyAction::Stats) => {
