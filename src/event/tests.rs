@@ -38,6 +38,7 @@ fn keybindings_map_multiple_keys_to_one_action() {
         ("space", "advance"),
         ("p", "hold"),
         ("d", "defer"),
+        ("f", "free_time"),
         ("q", "quit"),
         ("e", "edit"),
         ("l", "next_tab"),
@@ -73,6 +74,7 @@ fn duplicate_normalized_keybindings_are_rejected() {
         ("J", "previous"),
         ("shift+j", "advance"),
         ("p", "hold"),
+        ("f", "free_time"),
         ("q", "quit"),
         ("e", "edit"),
         ("l", "next_tab"),
@@ -93,6 +95,7 @@ fn unknown_keybinding_action_is_rejected() {
         ("k", "previous"),
         ("enter", "advance"),
         ("p", "hold"),
+        ("f", "free_time"),
         ("q", "quit"),
         ("e", "edit"),
         ("l", "next_tab"),
@@ -125,6 +128,7 @@ fn terminal_key_press_becomes_app_key_event() {
         Some(AppEvent::Key(received)) => assert_eq!(received, key),
         Some(
             AppEvent::TerminalResized
+            | AppEvent::WindowFocusChanged(_)
             | AppEvent::Tick
             | AppEvent::DayChanged
             | AppEvent::ConfigChanged
@@ -143,6 +147,18 @@ fn terminal_resize_becomes_app_resize_event() {
     assert!(matches!(
         app_event_from_terminal_event(Event::Resize(80, 24)),
         Some(AppEvent::TerminalResized)
+    ));
+}
+
+#[test]
+fn terminal_focus_events_become_app_focus_events() {
+    assert!(matches!(
+        app_event_from_terminal_event(Event::FocusGained),
+        Some(AppEvent::WindowFocusChanged(true))
+    ));
+    assert!(matches!(
+        app_event_from_terminal_event(Event::FocusLost),
+        Some(AppEvent::WindowFocusChanged(false))
     ));
 }
 

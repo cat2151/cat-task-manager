@@ -44,6 +44,7 @@ fn write_task_file_status_saves_gmt_timestamps_as_jst() {
         state: TaskState::Done,
         started_at: Some(time),
         completed_at: Some(time),
+        free_time_seconds: None,
     }];
 
     write_task_file_status(&path, date, &tasks).unwrap();
@@ -52,6 +53,34 @@ fn write_task_file_status_saves_gmt_timestamps_as_jst() {
     assert!(raw.contains("\"started_at\":\"2026-05-18T09:12:00+09:00\""));
     assert!(raw.contains("\"completed_at\":\"2026-05-18T09:12:00+09:00\""));
     assert!(!raw.contains("+00:00"));
+
+    fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn write_task_file_status_saves_free_time_seconds_without_timestamps() {
+    let path = temp_tasks_path("write-free-time-status");
+    fs::write(&path, "- [x] free time\n").unwrap();
+    let date = NaiveDate::from_ymd_opt(2026, 5, 18).unwrap();
+    let tasks = vec![DailyTask {
+        name: "free time".to_string(),
+        order: 1,
+        source_line: 1,
+        state: TaskState::Done,
+        started_at: None,
+        completed_at: None,
+        free_time_seconds: Some(65),
+    }];
+
+    write_task_file_status(&path, date, &tasks).unwrap();
+
+    let raw = fs::read_to_string(&path).unwrap();
+    assert_eq!(
+        raw,
+        "- [x] free time {\"date\":\"2026-05-18\",\"state\":\"done\",\"free_time_seconds\":65}\n"
+    );
+    assert!(!raw.contains("started_at"));
+    assert!(!raw.contains("completed_at"));
 
     fs::remove_file(path).unwrap();
 }

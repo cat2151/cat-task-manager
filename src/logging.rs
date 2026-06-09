@@ -36,6 +36,7 @@ pub enum TaskChangeCause {
     KeyAdvance,
     KeyHold,
     KeyDefer,
+    KeyFreeTime,
     KeyOther,
     TaskFileRead,
     DayChanged,
@@ -185,6 +186,7 @@ impl TaskChangeCause {
             TaskChangeCause::KeyAdvance => "advance key",
             TaskChangeCause::KeyHold => "hold key",
             TaskChangeCause::KeyDefer => "defer key",
+            TaskChangeCause::KeyFreeTime => "free time key",
             TaskChangeCause::KeyOther => "その他のkey",
             TaskChangeCause::TaskFileRead => "tasks file読み込み",
             TaskChangeCause::DayChanged => "日付変更",
@@ -196,6 +198,7 @@ impl TaskChangeCause {
             TaskChangeCause::KeyAdvance
             | TaskChangeCause::KeyHold
             | TaskChangeCause::KeyDefer
+            | TaskChangeCause::KeyFreeTime
             | TaskChangeCause::KeyOther => "key操作",
             TaskChangeCause::TaskFileRead => "tasks file",
             TaskChangeCause::DayChanged => "その他",

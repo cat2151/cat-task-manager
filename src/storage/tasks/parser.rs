@@ -1,7 +1,7 @@
 use chrono::{DateTime, Local, NaiveDate};
 use serde::Deserialize;
 
-use crate::app::TaskState;
+use crate::app::{TaskState, FREE_TIME_TASK_NAME};
 
 use super::{Task, TaskFileStatus, TaskStatus};
 
@@ -48,6 +48,7 @@ struct RawLineStatus {
     state: String,
     started_at: Option<String>,
     completed_at: Option<String>,
+    free_time_seconds: Option<u64>,
 }
 
 pub(super) fn parse_task_file_content(
@@ -169,26 +170,57 @@ fn parse_task_line_kind(line: &str, detected_at: DateTime<Local>) -> TaskLineKin
     if let Some(name) = task_text.strip_prefix(NOT_STARTED_PREFIX) {
         return TaskLineKind::Task(ParsedTaskLine {
             name,
-            checkbox_status: TaskStatus {
-                state: TaskState::NotStarted,
-                started_at: None,
-                completed_at: None,
-            },
+            checkbox_status: checkbox_status_for_not_started(name),
         });
     }
 
     if let Some(name) = task_text.strip_prefix(DONE_PREFIX) {
         return TaskLineKind::Task(ParsedTaskLine {
             name,
-            checkbox_status: TaskStatus {
-                state: TaskState::Done,
-                started_at: Some(detected_at),
-                completed_at: Some(detected_at),
-            },
+            checkbox_status: checkbox_status_for_done(name, detected_at),
         });
     }
 
     TaskLineKind::Invalid
+}
+
+fn checkbox_status_for_not_started(name: &str) -> TaskStatus {
+    if is_free_time_task_name(name) {
+        return free_time_task_status(0);
+    }
+
+    TaskStatus {
+        state: TaskState::NotStarted,
+        started_at: None,
+        completed_at: None,
+        free_time_seconds: None,
+    }
+}
+
+fn checkbox_status_for_done(name: &str, detected_at: DateTime<Local>) -> TaskStatus {
+    if is_free_time_task_name(name) {
+        return free_time_task_status(0);
+    }
+
+    TaskStatus {
+        state: TaskState::Done,
+        started_at: Some(detected_at),
+        completed_at: Some(detected_at),
+        free_time_seconds: None,
+    }
+}
+
+fn free_time_task_status(seconds: u64) -> TaskStatus {
+    TaskStatus {
+        state: TaskState::Done,
+        started_at: None,
+        completed_at: None,
+        free_time_seconds: Some(seconds),
+    }
+}
+
+fn is_free_time_task_name(name: &str) -> bool {
+    name.trim() == FREE_TIME_TASK_NAME
 }
 
 fn is_ignored_task_text(task_text: &str) -> bool {
@@ -209,6 +241,17 @@ fn parse_line_status(raw_status: RawLineStatus) -> Result<LineStatus, String> {
         )
     })?;
 
+    if let Some(seconds) = raw_status.free_time_seconds {
+        if raw_status.started_at.is_some() || raw_status.completed_at.is_some() {
+            return Err("free time 行末JSONには started_at/completed_at を書けません".to_string());
+        }
+
+        return Ok(LineStatus {
+            date,
+            task_status: free_time_task_status(seconds),
+        });
+    }
+
     let task_state =
         TaskState::from_status_value(&raw_status.state).unwrap_or(TaskState::NotStarted);
     let completed_at = if task_state == TaskState::Done {
@@ -227,6 +270,7 @@ fn parse_line_status(raw_status: RawLineStatus) -> Result<LineStatus, String> {
             state: task_state,
             started_at,
             completed_at,
+            free_time_seconds: None,
         },
     })
 }
@@ -281,6 +325,7 @@ fn build_task_file_status(
         status.state != TaskState::NotStarted
             || status.started_at.is_some()
             || status.completed_at.is_some()
+            || status.free_time_seconds.is_some()
     }) {
         return Ok(Some(TaskFileStatus {
             date: checkbox_status_date,
@@ -296,17 +341,23 @@ fn resolve_task_status(line_status: Option<TaskStatus>, checkbox_status: TaskSta
         return checkbox_status;
     };
 
+    if line_status.free_time_seconds.is_some() {
+        return line_status;
+    }
+
     match (&checkbox_status.state, &line_status.state) {
         (TaskState::Done, TaskState::Done) => line_status,
         (TaskState::Done, _) => TaskStatus {
             state: TaskState::Done,
             started_at: line_status.started_at.or(checkbox_status.started_at),
             completed_at: line_status.completed_at.or(checkbox_status.completed_at),
+            free_time_seconds: None,
         },
         (_, TaskState::Done) => TaskStatus {
             state: TaskState::NotStarted,
             started_at: None,
             completed_at: None,
+            free_time_seconds: None,
         },
         _ => line_status,
     }

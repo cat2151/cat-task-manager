@@ -3,6 +3,11 @@ editors = ["fresh", "zed", "nvim", "code"]
 [startup_git]
 auto_commit_and_push = false
 
+[ui.estimate_blink]
+enabled = true
+foreground = "green"
+background = "bg"
+
 [keybindings]
 j = "next"
 down = "next"
@@ -12,6 +17,7 @@ enter = "advance"
 space = "advance"
 p = "hold"
 d = "defer"
+f = "free_time"
 q = "quit"
 e = "edit"
 l = "next_tab"

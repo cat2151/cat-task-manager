@@ -7,7 +7,7 @@ use chrono::{DateTime, Local, NaiveDate};
 use serde::Serialize;
 
 use crate::{
-    app::{DailyTask, TaskState},
+    app::{DailyTask, TaskState, FREE_TIME_TASK_NAME},
     clock,
 };
 
@@ -18,6 +18,7 @@ use parser::{invalid_task_line_message, parse_task_file_content, split_task_line
 const DEFAULT_TASKS: &str = "- [ ] Morning routine\n- [ ] Check mail\n- [ ] Code review\n";
 const TASK_FILE_EXTENSION: &str = "md";
 const DEFAULT_TASKS_FILE_NAME: &str = "tasks.md";
+const FREE_TIME_TASKS_FILE_NAME: &str = "free_time.md";
 
 #[derive(Debug, Clone)]
 pub struct Task {
@@ -45,6 +46,7 @@ pub struct TaskStatus {
     pub state: TaskState,
     pub started_at: Option<DateTime<Local>>,
     pub completed_at: Option<DateTime<Local>>,
+    pub free_time_seconds: Option<u64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -55,6 +57,8 @@ struct LineStatusRecord<'a> {
     started_at: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     completed_at: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    free_time_seconds: Option<u64>,
 }
 
 pub(super) fn ensure_tasks_dir(path: &Path) -> Result<(), String> {
@@ -75,7 +79,27 @@ pub(super) fn ensure_tasks_dir(path: &Path) -> Result<(), String> {
         })?;
     }
 
+    ensure_free_time_file(path)?;
+
     Ok(())
+}
+
+fn ensure_free_time_file(tasks_dir: &Path) -> Result<(), String> {
+    let path = tasks_dir.join(FREE_TIME_TASKS_FILE_NAME);
+    if path.exists() {
+        return Ok(());
+    }
+
+    let raw = format!(
+        "- [x] {FREE_TIME_TASK_NAME} {{\"date\":\"{}\",\"state\":\"done\",\"free_time_seconds\":0}}\n",
+        clock::today_jst()
+    );
+    fs::write(&path, raw).map_err(|err| {
+        format!(
+            "free time tasks fileを書き込めませんでした: {} ({err})",
+            path.display()
+        )
+    })
 }
 
 fn tasks_dir_is_empty(path: &Path) -> Result<bool, String> {
@@ -235,13 +259,22 @@ fn render_task_file_with_line_status(
             .get(task_index)
             .ok_or_else(|| "task file のタスク数がアプリ内状態より多いです".to_string())?;
         validate_completion_times(task)?;
-        let started_at = task.started_at.as_ref().map(clock::format_rfc3339_jst);
-        let completed_at = task.completed_at.as_ref().map(clock::format_rfc3339_jst);
+        let started_at = if task.is_free_time() {
+            None
+        } else {
+            task.started_at.as_ref().map(clock::format_rfc3339_jst)
+        };
+        let completed_at = if task.is_free_time() {
+            None
+        } else {
+            task.completed_at.as_ref().map(clock::format_rfc3339_jst)
+        };
         let status = LineStatusRecord {
             date,
             state: task.state.status_value(),
             started_at: started_at.as_deref(),
             completed_at: completed_at.as_deref(),
+            free_time_seconds: task.free_time_seconds,
         };
         let json = serde_json::to_string(&status).map_err(|err| {
             format!(
@@ -298,6 +331,10 @@ fn render_task_text_for_state(task_text: &str, state: &TaskState) -> String {
 }
 
 fn validate_completion_times(task: &DailyTask) -> Result<(), String> {
+    if task.is_free_time() {
+        return Ok(());
+    }
+
     if matches!(task.state, TaskState::Done)
         && (task.started_at.is_none() || task.completed_at.is_none())
     {

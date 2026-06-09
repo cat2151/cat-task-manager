@@ -9,7 +9,7 @@ use ratatui::{
 use crate::{
     app::{App, AppScreen, ViewMode},
     event::{KeyAction, KeyBindings},
-    storage::APP_NAME,
+    storage::{MonokaiColorName, UiConfig, APP_NAME},
 };
 
 mod duration;
@@ -28,7 +28,7 @@ const MONOKAI_BLUE: Color = Color::Rgb(102, 217, 239);
 const TAB_SEPARATOR: &str = " | ";
 const TAB_SEPARATOR_WIDTH: u16 = 3;
 
-pub fn draw(frame: &mut Frame, app: &App, keybindings: &KeyBindings) {
+pub fn draw(frame: &mut Frame, app: &App, keybindings: &KeyBindings, ui_config: &UiConfig) {
     frame.render_widget(Block::default().style(base_style()), frame.area());
 
     if app.screen() == AppScreen::HistoryStats {
@@ -65,7 +65,7 @@ pub fn draw(frame: &mut Frame, app: &App, keybindings: &KeyBindings) {
     frame.render_widget(header, chunks[0]);
 
     match app.view_mode() {
-        ViewMode::OneLine => tasks::draw_one_line(frame, chunks[1], app),
+        ViewMode::OneLine => tasks::draw_one_line(frame, chunks[1], app, ui_config),
         ViewMode::Incomplete => tasks::draw_incomplete_list(frame, chunks[1], app),
         ViewMode::All => tasks::draw_all_list(frame, chunks[1], app),
     }
@@ -137,6 +137,7 @@ fn help_lines(keybindings: &KeyBindings) -> Vec<Line<'static>> {
             "保留（他タブへ）/再開",
         ),
         help_line(keybindings.label_for(KeyAction::Defer), "後回し"),
+        help_line(keybindings.label_for(KeyAction::FreeTime), "free time 切替"),
         help_line(keybindings.label_for(KeyAction::NextTab), "次のタブ"),
         help_line(keybindings.label_for(KeyAction::PreviousTab), "前のタブ"),
         help_line(keybindings.label_for(KeyAction::ToggleView), "表示切替"),
@@ -264,6 +265,20 @@ fn fg_style(color: Color) -> Style {
 
 fn emphasized_style(color: Color) -> Style {
     fg_style(color).add_modifier(Modifier::BOLD)
+}
+
+fn monokai_color(name: MonokaiColorName) -> Color {
+    match name {
+        MonokaiColorName::Bg => MONOKAI_BG,
+        MonokaiColorName::Fg => MONOKAI_FG,
+        MonokaiColorName::Comment => MONOKAI_COMMENT,
+        MonokaiColorName::Selection => MONOKAI_SELECTION,
+        MonokaiColorName::Pink => MONOKAI_PINK,
+        MonokaiColorName::Green => MONOKAI_GREEN,
+        MonokaiColorName::Yellow => MONOKAI_YELLOW,
+        MonokaiColorName::Orange => MONOKAI_ORANGE,
+        MonokaiColorName::Blue => MONOKAI_BLUE,
+    }
 }
 
 #[cfg(test)]

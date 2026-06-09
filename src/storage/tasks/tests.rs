@@ -36,6 +36,7 @@ fn daily_task(name: &str, order: u32, source_line: u32, state: TaskState) -> Dai
         state,
         started_at: completed_time,
         completed_at: completed_time,
+        free_time_seconds: None,
     }
 }
 
@@ -165,6 +166,7 @@ fn checked_task_without_line_end_json_is_persisted_with_completion_times() {
             state: status.state.clone(),
             started_at: status.started_at,
             completed_at: status.completed_at,
+            free_time_seconds: status.free_time_seconds,
         })
         .collect::<Vec<_>>();
 
@@ -177,6 +179,33 @@ fn checked_task_without_line_end_json_is_persisted_with_completion_times() {
     assert!(raw.contains("\"completed_at\":\""));
 
     fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn free_time_line_reads_cumulative_seconds_without_timestamps() {
+    let parsed = parser::parse_task_file_content(
+        "- [x] free time {\"date\":\"2026-05-18\",\"state\":\"done\",\"free_time_seconds\":42}\n",
+        status_date(),
+    )
+    .unwrap();
+    let status = parsed.status.unwrap();
+
+    assert_eq!(parsed.tasks[0].name, "free time");
+    assert_eq!(status.states[0].state, TaskState::Done);
+    assert_eq!(status.states[0].free_time_seconds, Some(42));
+    assert!(status.states[0].started_at.is_none());
+    assert!(status.states[0].completed_at.is_none());
+}
+
+#[test]
+fn checked_free_time_without_line_end_json_starts_at_zero_seconds() {
+    let parsed = parser::parse_task_file_content("- [x] free time\n", status_date()).unwrap();
+    let status = parsed.status.unwrap();
+
+    assert_eq!(status.states[0].state, TaskState::Done);
+    assert_eq!(status.states[0].free_time_seconds, Some(0));
+    assert!(status.states[0].started_at.is_none());
+    assert!(status.states[0].completed_at.is_none());
 }
 
 #[test]
@@ -253,6 +282,9 @@ fn ensure_tasks_dir_creates_default_only_when_directory_is_empty() {
     ensure_tasks_dir(&empty_dir).unwrap();
     let raw = fs::read_to_string(empty_dir.join("tasks.md")).unwrap();
     assert!(raw.contains("- [ ] Morning routine"));
+    let free_time_raw = fs::read_to_string(empty_dir.join("free_time.md")).unwrap();
+    assert!(free_time_raw.contains("- [x] free time"));
+    assert!(free_time_raw.contains("\"free_time_seconds\":0"));
     fs::remove_dir_all(empty_dir).unwrap();
 
     let occupied_dir = temp_tasks_dir("ensure-occupied-task-tabs");
@@ -260,7 +292,15 @@ fn ensure_tasks_dir_creates_default_only_when_directory_is_empty() {
     fs::write(occupied_dir.join(".keep"), "").unwrap();
     ensure_tasks_dir(&occupied_dir).unwrap();
     assert!(!occupied_dir.join("tasks.md").exists());
-    assert!(load_task_files(&occupied_dir).unwrap().is_empty());
+    assert!(occupied_dir.join("free_time.md").exists());
+    assert_eq!(
+        load_task_files(&occupied_dir)
+            .unwrap()
+            .iter()
+            .map(|file| file.label.as_str())
+            .collect::<Vec<_>>(),
+        vec!["free_time"]
+    );
     fs::remove_dir_all(occupied_dir).unwrap();
 }
 
@@ -323,6 +363,7 @@ fn load_and_write_deferred_line_end_status() {
             state: status.state.clone(),
             started_at: status.started_at,
             completed_at: status.completed_at,
+            free_time_seconds: status.free_time_seconds,
         })
         .collect::<Vec<_>>();
 
@@ -378,6 +419,7 @@ fn checked_checkbox_overrides_not_started_line_end_status_and_persists_completio
             state: status.state.clone(),
             started_at: status.started_at,
             completed_at: status.completed_at,
+            free_time_seconds: status.free_time_seconds,
         })
         .collect::<Vec<_>>();
 

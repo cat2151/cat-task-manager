@@ -5,6 +5,8 @@ use chrono::{DateTime, Local};
 use crossterm::event::KeyModifiers;
 use std::path::PathBuf;
 
+mod view;
+
 fn task(name: &str, order: u32, source_line: u32) -> Task {
     Task {
         name: name.to_string(),
@@ -141,11 +143,13 @@ fn apply_statuses_matches_by_tasks_file_order() {
                 state: TaskState::Done,
                 started_at: Some(timestamp()),
                 completed_at: Some(timestamp()),
+                free_time_seconds: None,
             },
             TaskStatus {
                 state: TaskState::InProgress,
                 started_at: None,
                 completed_at: None,
+                free_time_seconds: None,
             },
         ],
     );
@@ -170,23 +174,12 @@ fn extra_tasks_without_status_stay_not_started() {
             state: TaskState::Done,
             started_at: Some(timestamp()),
             completed_at: Some(timestamp()),
+            free_time_seconds: None,
         }],
     );
 
     assert_eq!(app.tabs[0].tasks[0].state, TaskState::Done);
     assert_eq!(app.tabs[0].tasks[1].state, TaskState::NotStarted);
-}
-
-#[test]
-fn starts_in_one_line_mode_and_toggles_view_mode() {
-    let mut app = app();
-    assert_eq!(app.view_mode(), ViewMode::OneLine);
-    app.toggle_view_mode();
-    assert_eq!(app.view_mode(), ViewMode::Incomplete);
-    app.toggle_view_mode();
-    assert_eq!(app.view_mode(), ViewMode::All);
-    app.toggle_view_mode();
-    assert_eq!(app.view_mode(), ViewMode::OneLine);
 }
 
 #[test]
@@ -370,6 +363,78 @@ fn all_tab_one_line_skips_rest_of_held_tab_and_starts_other_tab_task() {
 
     assert_eq!(app.tabs[0].tasks[1].state, TaskState::NotStarted);
     assert_eq!(app.tabs[1].tasks[0].state, TaskState::InProgress);
+}
+
+#[test]
+fn free_time_key_holds_in_progress_tasks_and_selects_free_time_tab() {
+    let mut app = App::new(
+        vec![
+            task_list("0730", vec![task("a", 1, 1)]),
+            task_list(FREE_TIME_TAB_LABEL, vec![task(FREE_TIME_TASK_NAME, 1, 1)]),
+        ],
+        NaiveDate::from_ymd_opt(2026, 5, 18).unwrap(),
+    );
+    let keybindings = KeyBindings::from_config(KeyBindingsConfig::default()).unwrap();
+
+    app.advance_selected();
+    app.handle_key(
+        KeyEvent::new(KeyCode::Char('f'), KeyModifiers::empty()),
+        &keybindings,
+    );
+
+    assert!(app.free_time_active());
+    assert_eq!(app.tabs[0].tasks[0].state, TaskState::OnHold);
+    assert_eq!(app.current_tab_label(), FREE_TIME_TAB_LABEL);
+    assert_eq!(
+        app.selected_visible_task().unwrap().1.name,
+        FREE_TIME_TASK_NAME
+    );
+}
+
+#[test]
+fn free_time_key_resumes_first_on_hold_task_and_selects_its_tab() {
+    let mut app = App::new(
+        vec![
+            task_list("0730", vec![task("a", 1, 1)]),
+            task_list("0800", vec![task("b", 1, 1)]),
+            task_list(FREE_TIME_TAB_LABEL, vec![task(FREE_TIME_TASK_NAME, 1, 1)]),
+        ],
+        NaiveDate::from_ymd_opt(2026, 5, 18).unwrap(),
+    );
+    let keybindings = KeyBindings::from_config(KeyBindingsConfig::default()).unwrap();
+    app.tabs[0].tasks[0].state = TaskState::InProgress;
+    app.tabs[1].tasks[0].state = TaskState::InProgress;
+
+    app.handle_key(
+        KeyEvent::new(KeyCode::Char('f'), KeyModifiers::empty()),
+        &keybindings,
+    );
+    app.handle_key(
+        KeyEvent::new(KeyCode::Char('f'), KeyModifiers::empty()),
+        &keybindings,
+    );
+
+    assert!(!app.free_time_active());
+    assert_eq!(app.tabs[0].tasks[0].state, TaskState::InProgress);
+    assert_eq!(app.tabs[1].tasks[0].state, TaskState::OnHold);
+    assert_eq!(app.current_tab_label(), "0730");
+}
+
+#[test]
+fn day_change_resets_free_time_seconds() {
+    let mut app = App::new(
+        vec![task_list(
+            FREE_TIME_TAB_LABEL,
+            vec![task(FREE_TIME_TASK_NAME, 1, 1)],
+        )],
+        NaiveDate::from_ymd_opt(2026, 5, 18).unwrap(),
+    );
+    app.tabs[0].tasks[0].free_time_seconds = Some(123);
+
+    app.complete_day(NaiveDate::from_ymd_opt(2026, 5, 19).unwrap());
+
+    assert_eq!(app.tabs[0].tasks[0].free_time_seconds, Some(0));
+    assert_eq!(app.tabs[0].tasks[0].state, TaskState::Done);
 }
 
 #[test]

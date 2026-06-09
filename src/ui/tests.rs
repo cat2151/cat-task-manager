@@ -4,12 +4,15 @@ use ratatui::style::Modifier;
 use ratatui::text::Line;
 use std::path::PathBuf;
 
-use super::tasks::{all_task_lines, one_line_task_lines, task_line};
+use super::{
+    tasks::{all_task_lines, one_line_task_lines, one_line_task_lines_with_config, task_line},
+    MONOKAI_BG, MONOKAI_GREEN, MONOKAI_SELECTION, MONOKAI_YELLOW,
+};
 use crate::{
     app::{App, DailyTask, TaskState},
     event::KeyBindings,
     history_stats::{HistoryStatsReport, TaskNameCount, TypicalTaskDuration},
-    storage::{KeyBindingsConfig, Task},
+    storage::{KeyBindingsConfig, MonokaiColorName, Task, UiConfig},
 };
 
 fn task(name: &str, order: u32, source_line: u32) -> Task {
@@ -71,6 +74,7 @@ fn one_line_task_line_does_not_show_completed_duration() {
         state: TaskState::Done,
         started_at: Some(timestamp("2026-05-18T09:00:00+09:00")),
         completed_at: Some(timestamp("2026-05-18T09:05:00+09:00")),
+        free_time_seconds: None,
     };
 
     let line = task_line(&task, None, false);
@@ -87,6 +91,7 @@ fn task_line_shows_deferred_state() {
         state: TaskState::Deferred,
         started_at: None,
         completed_at: None,
+        free_time_seconds: None,
     };
 
     let line = task_line(&task, None, false);
@@ -103,6 +108,7 @@ fn task_line_shows_estimated_duration_instead_of_order() {
         state: TaskState::NotStarted,
         started_at: None,
         completed_at: None,
+        free_time_seconds: None,
     };
 
     let line = task_line(&task, Some(30 * 60), false);
@@ -116,6 +122,126 @@ fn task_line_shows_estimated_duration_instead_of_order() {
     assert!(text.starts_with("見込み"));
     assert!(text.contains("30分"));
     assert!(!text.contains("12."));
+    assert!(estimate_span
+        .style
+        .add_modifier
+        .contains(Modifier::SLOW_BLINK));
+}
+
+#[test]
+fn free_time_task_line_shows_cumulative_seconds() {
+    let task = DailyTask {
+        name: "free time".to_string(),
+        order: 1,
+        source_line: 1,
+        state: TaskState::Done,
+        started_at: None,
+        completed_at: None,
+        free_time_seconds: Some(65),
+    };
+
+    let line = task_line(&task, None, false);
+    let text = line_text(&line);
+
+    assert!(text.contains("free time"));
+    assert!(text.contains("累積free time 1分5秒"));
+    assert!(!text.contains("見込み"));
+}
+
+#[test]
+fn focused_one_line_estimate_swaps_configured_colors_every_500ms() {
+    let mut app = App::new(
+        vec![task_list("0730", vec![task("breakfast", 1, 1)])],
+        NaiveDate::from_ymd_opt(2026, 5, 18).unwrap(),
+    );
+    let ui_config = UiConfig::default();
+
+    let lines = one_line_task_lines_with_config(&app, &ui_config).unwrap();
+    let estimate_span = lines[0]
+        .spans
+        .iter()
+        .find(|span| span.content.contains("なし"))
+        .unwrap();
+
+    assert_eq!(estimate_span.style.fg, Some(MONOKAI_GREEN));
+    assert_eq!(estimate_span.style.bg, Some(MONOKAI_BG));
+    assert!(!estimate_span
+        .style
+        .add_modifier
+        .contains(Modifier::SLOW_BLINK));
+
+    for _ in 0..10 {
+        app.tick_estimate_blink();
+    }
+
+    let lines = one_line_task_lines_with_config(&app, &ui_config).unwrap();
+    let estimate_span = lines[0]
+        .spans
+        .iter()
+        .find(|span| span.content.contains("なし"))
+        .unwrap();
+
+    assert_eq!(estimate_span.style.fg, Some(MONOKAI_BG));
+    assert_eq!(estimate_span.style.bg, Some(MONOKAI_GREEN));
+}
+
+#[test]
+fn focused_one_line_estimate_uses_configured_monokai_colors() {
+    let app = App::new(
+        vec![task_list("0730", vec![task("breakfast", 1, 1)])],
+        NaiveDate::from_ymd_opt(2026, 5, 18).unwrap(),
+    );
+    let mut ui_config = UiConfig::default();
+    ui_config.estimate_blink.foreground = MonokaiColorName::Yellow;
+    ui_config.estimate_blink.background = MonokaiColorName::Selection;
+
+    let lines = one_line_task_lines_with_config(&app, &ui_config).unwrap();
+    let estimate_span = lines[0]
+        .spans
+        .iter()
+        .find(|span| span.content.contains("なし"))
+        .unwrap();
+
+    assert_eq!(estimate_span.style.fg, Some(MONOKAI_YELLOW));
+    assert_eq!(estimate_span.style.bg, Some(MONOKAI_SELECTION));
+}
+
+#[test]
+fn unfocused_one_line_estimate_keeps_slow_blink_style() {
+    let mut app = App::new(
+        vec![task_list("0730", vec![task("breakfast", 1, 1)])],
+        NaiveDate::from_ymd_opt(2026, 5, 18).unwrap(),
+    );
+    app.set_window_focused(false);
+
+    let lines = one_line_task_lines_with_config(&app, &UiConfig::default()).unwrap();
+    let estimate_span = lines[0]
+        .spans
+        .iter()
+        .find(|span| span.content.contains("なし"))
+        .unwrap();
+
+    assert!(estimate_span
+        .style
+        .add_modifier
+        .contains(Modifier::SLOW_BLINK));
+}
+
+#[test]
+fn started_one_line_estimate_keeps_slow_blink_style() {
+    let mut app = App::new(
+        vec![task_list("0730", vec![task("breakfast", 1, 1)])],
+        NaiveDate::from_ymd_opt(2026, 5, 18).unwrap(),
+    );
+    app.tabs[0].tasks[0].state = TaskState::InProgress;
+
+    let lines = one_line_task_lines_with_config(&app, &UiConfig::default()).unwrap();
+    let estimate_span = lines[0]
+        .spans
+        .iter()
+        .find(|span| span.content.contains("なし"))
+        .unwrap();
+
     assert!(estimate_span
         .style
         .add_modifier

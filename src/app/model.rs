@@ -61,6 +61,7 @@ pub struct DailyTask {
     pub state: TaskState,
     pub started_at: Option<DateTime<Local>>,
     pub completed_at: Option<DateTime<Local>>,
+    pub free_time_seconds: Option<u64>,
 }
 
 #[derive(Debug, Clone)]

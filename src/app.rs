@@ -9,16 +9,20 @@ use crate::{
 };
 
 mod actions;
+mod blink;
+mod free_time;
 mod model;
 mod stats;
 pub use model::{DailyTask, TaskList, TaskState, TaskTab, ViewMode};
 pub use stats::{AppScreen, HistoryStatsState};
 
 const ALL_TAB_LABEL: &str = "all";
+pub const FREE_TIME_TAB_LABEL: &str = "free_time";
+pub const FREE_TIME_TASK_NAME: &str = "free time";
 const EMPTY_VISIBLE_TASKS_MESSAGE: &str = "表示対象のタスクはありません";
 const ALL_DONE_VISIBLE_TASKS_MESSAGE: &str = "このタブのタスクはすべて完了済みです";
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct TaskLocation {
     tab_index: usize,
     task_index: usize,
@@ -37,6 +41,11 @@ pub struct App {
     show_help: bool,
     background_message: Option<String>,
     spinner_frame: usize,
+    window_focused: bool,
+    estimate_blink_phase: bool,
+    estimate_blink_tick: u8,
+    free_time_active: bool,
+    free_time_started_at: Option<chrono::DateTime<chrono::Local>>,
     message: String,
 }
 
@@ -54,6 +63,11 @@ impl App {
             show_help: false,
             background_message: None,
             spinner_frame: 0,
+            window_focused: true,
+            estimate_blink_phase: false,
+            estimate_blink_tick: 0,
+            free_time_active: false,
+            free_time_started_at: None,
             message: "待機中".to_string(),
         }
     }
@@ -78,6 +92,7 @@ impl App {
                 KeyAction::Advance => self.advance_selected(),
                 KeyAction::Hold => self.toggle_hold_selected(),
                 KeyAction::Defer => self.defer_selected(),
+                KeyAction::FreeTime => self.toggle_free_time(),
                 KeyAction::ToggleView => self.toggle_view_mode(),
                 KeyAction::Stats => {
                     self.toggle_history_stats_screen();
@@ -229,6 +244,7 @@ impl App {
             task.state = status.state.clone();
             task.started_at = status.started_at;
             task.completed_at = status.completed_at;
+            task.free_time_seconds = status.free_time_seconds;
         }
         self.clamp_selection();
     }
@@ -273,12 +289,22 @@ impl App {
     fn reset_for_new_day(&mut self, new_date: NaiveDate) {
         for tab in &mut self.tabs {
             for task in &mut tab.tasks {
+                if task.free_time_seconds.is_some() {
+                    task.state = TaskState::Done;
+                    task.started_at = None;
+                    task.completed_at = None;
+                    task.free_time_seconds = Some(0);
+                    continue;
+                }
                 task.state = TaskState::NotStarted;
                 task.started_at = None;
                 task.completed_at = None;
             }
         }
         self.current_date = new_date;
+        if self.free_time_active {
+            self.free_time_started_at = Some(chrono::Local::now());
+        }
         self.selected_visible = 0;
         self.show_help = false;
     }
@@ -335,7 +361,8 @@ impl App {
     }
 
     fn task_is_visible(&self, location: TaskLocation, task: &DailyTask) -> bool {
-        task.state.visible() && !self.hides_from_one_line_task(location, task)
+        (task.state.visible() || task.free_time_seconds.is_some())
+            && !self.hides_from_one_line_task(location, task)
     }
 
     fn current_tab_tasks_are_all_done(&self) -> bool {
@@ -389,19 +416,28 @@ impl App {
 }
 
 fn task_tab_from_list(task_list: TaskList) -> TaskTab {
+    let is_free_time_tab = task_list.label == FREE_TIME_TAB_LABEL;
     TaskTab {
         label: task_list.label,
         path: task_list.path,
         tasks: task_list
             .tasks
             .into_iter()
-            .map(|task| DailyTask {
-                name: task.name,
-                order: task.order,
-                source_line: task.source_line,
-                state: TaskState::NotStarted,
-                started_at: None,
-                completed_at: None,
+            .map(|task| {
+                let is_free_time_task = is_free_time_tab && task.name == FREE_TIME_TASK_NAME;
+                DailyTask {
+                    name: task.name,
+                    order: task.order,
+                    source_line: task.source_line,
+                    state: if is_free_time_task {
+                        TaskState::Done
+                    } else {
+                        TaskState::NotStarted
+                    },
+                    started_at: None,
+                    completed_at: None,
+                    free_time_seconds: is_free_time_task.then_some(0),
+                }
             })
             .collect(),
     }

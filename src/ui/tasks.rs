@@ -1,25 +1,28 @@
 use chrono::Duration;
 use ratatui::{
     layout::Rect,
-    style::{Color, Modifier},
+    style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{List, ListItem, ListState, Paragraph},
     Frame,
 };
 
-use crate::app::{App, DailyTask, TaskState};
+use crate::{
+    app::{App, DailyTask, TaskState},
+    storage::UiConfig,
+};
 
 use super::{
-    base_style, duration::format_elapsed_seconds, emphasized_style, fg_style, task_block,
-    MONOKAI_BLUE, MONOKAI_COMMENT, MONOKAI_FG, MONOKAI_GREEN, MONOKAI_ORANGE, MONOKAI_PINK,
-    MONOKAI_SELECTION, MONOKAI_YELLOW,
+    base_style, duration::format_elapsed_seconds, emphasized_style, fg_style, monokai_color,
+    task_block, MONOKAI_BLUE, MONOKAI_COMMENT, MONOKAI_FG, MONOKAI_GREEN, MONOKAI_ORANGE,
+    MONOKAI_PINK, MONOKAI_SELECTION, MONOKAI_YELLOW,
 };
 
 const ON_HOLD_ONE_LINE_NOTE: &str =
     "保留中です。このタブは止めて、他タブのタスクを実施してください";
 
-pub(super) fn draw_one_line(frame: &mut Frame, area: Rect, app: &App) {
-    if let Some(lines) = one_line_task_lines(app) {
+pub(super) fn draw_one_line(frame: &mut Frame, area: Rect, app: &App, ui_config: &UiConfig) {
+    if let Some(lines) = one_line_task_lines_with_config(app, ui_config) {
         let task = Paragraph::new(lines)
             .style(base_style())
             .block(task_block());
@@ -32,9 +35,22 @@ pub(super) fn draw_one_line(frame: &mut Frame, area: Rect, app: &App) {
     }
 }
 
+#[cfg(test)]
 pub(super) fn one_line_task_lines(app: &App) -> Option<Vec<Line<'_>>> {
+    one_line_task_lines_with_config(app, &UiConfig::default())
+}
+
+pub(super) fn one_line_task_lines_with_config<'a>(
+    app: &'a App,
+    ui_config: &UiConfig,
+) -> Option<Vec<Line<'a>>> {
     let (_, task) = app.selected_visible_task()?;
-    let mut lines = vec![task_line_for_app(task, app, false)];
+    let mut lines = vec![task_line_for_app(
+        task,
+        app,
+        false,
+        estimate_style_for_one_line(app, ui_config),
+    )];
     if task.state == TaskState::OnHold && !app.current_tab_is_all() {
         lines.push(Line::from(Span::styled(
             ON_HOLD_ONE_LINE_NOTE,
@@ -48,7 +64,14 @@ pub(super) fn draw_incomplete_list(frame: &mut Frame, area: Rect, app: &App) {
     let visible_tasks = app.visible_tasks();
     let items: Vec<ListItem> = visible_tasks
         .iter()
-        .map(|(_, task)| ListItem::new(task_line_for_app(task, app, false)))
+        .map(|(_, task)| {
+            ListItem::new(task_line_for_app(
+                task,
+                app,
+                false,
+                default_estimate_style(),
+            ))
+        })
         .collect();
 
     if items.is_empty() {
@@ -92,7 +115,7 @@ pub(super) fn draw_all_list(frame: &mut Frame, area: Rect, app: &App) {
 pub(super) fn all_task_lines(app: &App) -> Vec<Line<'_>> {
     app.current_tasks()
         .into_iter()
-        .map(|task| task_line_for_app(task, app, true))
+        .map(|task| task_line_for_app(task, app, true, default_estimate_style()))
         .collect()
 }
 
@@ -100,19 +123,43 @@ fn task_line_for_app<'a>(
     task: &'a DailyTask,
     app: &App,
     show_completed_duration: bool,
+    estimate_style: Style,
 ) -> Line<'a> {
-    task_line(
+    task_line_with_style(
         task,
+        app.free_time_display_seconds(task),
         app.typical_task_duration_seconds(&task.name),
         show_completed_duration,
+        estimate_style,
     )
 }
 
+#[cfg(test)]
 pub(super) fn task_line(
     task: &DailyTask,
     typical_duration_seconds: Option<i64>,
     show_completed_duration: bool,
 ) -> Line<'_> {
+    task_line_with_style(
+        task,
+        task.free_time_seconds,
+        typical_duration_seconds,
+        show_completed_duration,
+        default_estimate_style(),
+    )
+}
+
+fn task_line_with_style(
+    task: &DailyTask,
+    free_time_seconds: Option<u64>,
+    typical_duration_seconds: Option<i64>,
+    show_completed_duration: bool,
+    estimate_style: Style,
+) -> Line<'_> {
+    if let Some(seconds) = free_time_seconds {
+        return free_time_task_line(task, seconds);
+    }
+
     let mut spans = vec![
         Span::styled("見込み ", fg_style(MONOKAI_BLUE)),
         Span::styled(
@@ -122,7 +169,7 @@ pub(super) fn task_line(
                     .map(format_elapsed_seconds)
                     .unwrap_or_else(|| "なし".to_string())
             ),
-            emphasized_style(MONOKAI_GREEN).add_modifier(Modifier::SLOW_BLINK),
+            estimate_style,
         ),
         Span::styled(&task.name, base_style()),
         Span::styled("  ", base_style()),
@@ -151,6 +198,42 @@ pub(super) fn task_line(
     }
 
     Line::from(spans)
+}
+
+fn free_time_task_line(task: &DailyTask, seconds: u64) -> Line<'_> {
+    Line::from(vec![
+        Span::styled(&task.name, base_style()),
+        Span::styled("  ", base_style()),
+        Span::styled(
+            format!("累積free time {}", format_elapsed_seconds(seconds as i64)),
+            fg_style(MONOKAI_GREEN),
+        ),
+        Span::styled("  ", base_style()),
+        Span::styled(
+            task.state.label(),
+            fg_style(state_color(task.state.label())),
+        ),
+    ])
+}
+
+fn estimate_style_for_one_line(app: &App, ui_config: &UiConfig) -> Style {
+    if !ui_config.estimate_blink.enabled || !app.estimate_blink_context() {
+        return default_estimate_style();
+    }
+
+    let foreground = monokai_color(ui_config.estimate_blink.foreground);
+    let background = monokai_color(ui_config.estimate_blink.background);
+    let (foreground, background) = if app.estimate_blink_phase() {
+        (background, foreground)
+    } else {
+        (foreground, background)
+    };
+
+    emphasized_style(foreground).bg(background)
+}
+
+fn default_estimate_style() -> Style {
+    emphasized_style(MONOKAI_GREEN).add_modifier(Modifier::SLOW_BLINK)
 }
 
 fn completed_work_duration(task: &DailyTask) -> Option<Duration> {

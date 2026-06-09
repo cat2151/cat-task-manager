@@ -2,8 +2,11 @@ use std::{collections::HashSet, fs, path::Path};
 
 use serde::{de::Error as _, Deserialize, Deserializer};
 
+mod ui;
+pub use ui::{MonokaiColorName, UiConfig};
+
 const DEFAULT_EDITORS: [&str; 4] = ["fresh", "zed", "nvim", "code"];
-const DEFAULT_KEYBINDINGS: [(&str, &str); 17] = [
+const DEFAULT_KEYBINDINGS: [(&str, &str); 18] = [
     ("j", "next"),
     ("down", "next"),
     ("k", "previous"),
@@ -12,6 +15,7 @@ const DEFAULT_KEYBINDINGS: [(&str, &str); 17] = [
     ("space", "advance"),
     ("p", "hold"),
     ("d", "defer"),
+    ("f", "free_time"),
     ("q", "quit"),
     ("e", "edit"),
     ("l", "next_tab"),
@@ -27,6 +31,11 @@ const DEFAULT_CONFIG: &str = r#"editors = ["fresh", "zed", "nvim", "code"]
 [startup_git]
 auto_commit_and_push = false
 
+[ui.estimate_blink]
+enabled = true
+foreground = "green"
+background = "bg"
+
 [keybindings]
 j = "next"
 down = "next"
@@ -36,6 +45,7 @@ enter = "advance"
 space = "advance"
 p = "hold"
 d = "defer"
+f = "free_time"
 q = "quit"
 e = "edit"
 l = "next_tab"
@@ -114,6 +124,7 @@ pub struct ConfigFile {
     pub keybindings: KeyBindingsConfig,
     pub editors: Vec<String>,
     pub startup_git: StartupGitConfig,
+    pub ui: UiConfig,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -125,6 +136,8 @@ struct RawConfigFile {
     editors: Vec<String>,
     #[serde(default)]
     startup_git: StartupGitConfig,
+    #[serde(default)]
+    ui: UiConfig,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -164,6 +177,7 @@ pub fn load_config_file(path: impl AsRef<Path>) -> Result<ConfigFile, String> {
         keybindings: file.keybindings,
         editors: normalize_editors(file.editors),
         startup_git: file.startup_git,
+        ui: file.ui,
     })
 }
 
@@ -277,6 +291,8 @@ fn ensure_config_defaults(path: &Path) -> Result<(), String> {
         changed = true;
     }
 
+    changed |= ui::ensure_ui_defaults(table, path)?;
+
     if changed {
         let updated = toml::to_string_pretty(&value).map_err(|err| {
             format!(
@@ -303,146 +319,4 @@ fn default_keybindings_table() -> toml::Table {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use std::{
-        path::PathBuf,
-        time::{SystemTime, UNIX_EPOCH},
-    };
-
-    fn temp_config_path(test_name: &str) -> PathBuf {
-        let suffix = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        std::env::temp_dir().join(format!("cat-task-manager-{test_name}-{suffix}.toml"))
-    }
-
-    fn keybinding(path: &Path, key: &str) -> String {
-        optional_keybinding(path, key).unwrap()
-    }
-
-    fn optional_keybinding(path: &Path, key: &str) -> Option<String> {
-        let raw = fs::read_to_string(path).unwrap();
-        let value: toml::Value = toml::from_str(&raw).unwrap();
-        value
-            .get("keybindings")
-            .and_then(|table| table.get(key))
-            .and_then(toml::Value::as_str)
-            .map(str::to_string)
-    }
-
-    #[test]
-    fn normalize_editors_uses_default_when_empty() {
-        assert_eq!(normalize_editors(vec![]), default_editors());
-        assert_eq!(
-            normalize_editors(vec![" ".to_string(), "\t".to_string()]),
-            default_editors()
-        );
-    }
-
-    #[test]
-    fn normalize_editors_trims_and_deduplicates() {
-        assert_eq!(
-            normalize_editors(vec![
-                " nvim ".to_string(),
-                "NVIM".to_string(),
-                "code".to_string()
-            ]),
-            vec!["nvim".to_string(), "code".to_string()]
-        );
-    }
-
-    #[test]
-    fn config_defaults_preserve_existing_keybindings_and_add_missing_actions() {
-        let path = temp_config_path("preserve-keybindings");
-        fs::write(
-            &path,
-            "editors = [\"nvim\"]\n\n[keybindings]\nj = \"next\"\nx = \"previous\"\n",
-        )
-        .unwrap();
-
-        ensure_config_defaults(&path).unwrap();
-
-        assert_eq!(keybinding(&path, "j"), "next");
-        assert_eq!(keybinding(&path, "x"), "previous");
-        assert_eq!(optional_keybinding(&path, "down"), None);
-        assert_eq!(optional_keybinding(&path, "k"), None);
-        assert_eq!(keybinding(&path, "enter"), "advance");
-        assert_eq!(keybinding(&path, "d"), "defer");
-        assert_eq!(keybinding(&path, "s"), "stats");
-
-        fs::remove_file(path).unwrap();
-    }
-
-    #[test]
-    fn config_defaults_add_keybindings_table() {
-        let path = temp_config_path("add-keybindings");
-        fs::write(&path, "editors = [\"nvim\"]\n").unwrap();
-
-        ensure_config_defaults(&path).unwrap();
-
-        assert_eq!(keybinding(&path, "j"), "next");
-        assert_eq!(keybinding(&path, "d"), "defer");
-        assert_eq!(keybinding(&path, "right"), "next_tab");
-        assert_eq!(keybinding(&path, "s"), "stats");
-        assert_eq!(keybinding(&path, "?"), "help");
-
-        fs::remove_file(path).unwrap();
-    }
-
-    #[test]
-    fn config_defaults_add_startup_git_table() {
-        let path = temp_config_path("add-startup-git");
-        fs::write(&path, "editors = [\"nvim\"]\n").unwrap();
-
-        ensure_config_defaults(&path).unwrap();
-
-        let raw = fs::read_to_string(&path).unwrap();
-        let value: toml::Value = toml::from_str(&raw).unwrap();
-        assert_eq!(
-            value
-                .get("startup_git")
-                .and_then(|table| table.get("auto_commit_and_push"))
-                .and_then(toml::Value::as_bool),
-            Some(false)
-        );
-
-        fs::remove_file(path).unwrap();
-    }
-
-    #[test]
-    fn default_config_is_config_only() {
-        let file: RawConfigFile = toml::from_str(DEFAULT_CONFIG).unwrap();
-
-        assert_eq!(file.editors, default_editors());
-        assert!(!file.startup_git.auto_commit_and_push);
-        assert_eq!(file.keybindings.get("j"), Some("next"));
-        assert_eq!(file.keybindings.get("down"), Some("next"));
-        assert_eq!(file.keybindings.get("space"), Some("advance"));
-        assert_eq!(file.keybindings.get("d"), Some("defer"));
-        assert_eq!(file.keybindings.get("right"), Some("next_tab"));
-        assert_eq!(file.keybindings.get("s"), Some("stats"));
-        assert_eq!(file.keybindings.get("?"), Some("help"));
-    }
-
-    #[test]
-    fn startup_git_auto_commit_and_push_is_read_from_config() {
-        let raw = r#"editors = ["nvim"]
-
-[startup_git]
-auto_commit_and_push = true
-"#;
-
-        let file: RawConfigFile = toml::from_str(raw).unwrap();
-
-        assert!(file.startup_git.auto_commit_and_push);
-    }
-
-    #[test]
-    fn tasks_in_config_are_rejected() {
-        let raw = "tasks = '''\na\n'''\n";
-
-        assert!(toml::from_str::<RawConfigFile>(raw).is_err());
-    }
-}
+mod tests;

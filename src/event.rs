@@ -19,6 +19,7 @@ use crate::{
 pub enum AppEvent {
     Key(KeyEvent),
     TerminalResized,
+    WindowFocusChanged(bool),
     Tick,
     DayChanged,
     ConfigChanged,
@@ -41,6 +42,7 @@ pub enum KeyAction {
     Advance,
     Hold,
     Defer,
+    FreeTime,
     Quit,
     Edit,
     NextTab,
@@ -112,12 +114,13 @@ impl KeyBindings {
 }
 
 impl KeyAction {
-    pub const ALL: [Self; 12] = [
+    pub const ALL: [Self; 13] = [
         Self::Next,
         Self::Previous,
         Self::Advance,
         Self::Hold,
         Self::Defer,
+        Self::FreeTime,
         Self::Quit,
         Self::Edit,
         Self::NextTab,
@@ -134,6 +137,7 @@ impl KeyAction {
             "advance" => Ok(Self::Advance),
             "hold" => Ok(Self::Hold),
             "defer" => Ok(Self::Defer),
+            "free_time" => Ok(Self::FreeTime),
             "quit" => Ok(Self::Quit),
             "edit" => Ok(Self::Edit),
             "next_tab" => Ok(Self::NextTab),
@@ -142,7 +146,7 @@ impl KeyAction {
             "stats" => Ok(Self::Stats),
             "help" => Ok(Self::Help),
             _ => Err(format!(
-                "未対応の keybinding action です: '{raw}'。next、previous、advance、hold、defer、quit、edit、next_tab、previous_tab、toggle_view、stats、help を使ってください。"
+                "未対応の keybinding action です: '{raw}'。next、previous、advance、hold、defer、free_time、quit、edit、next_tab、previous_tab、toggle_view、stats、help を使ってください。"
             )),
         }
     }
@@ -154,6 +158,7 @@ impl KeyAction {
             Self::Advance => "advance",
             Self::Hold => "hold",
             Self::Defer => "defer",
+            Self::FreeTime => "free_time",
             Self::Quit => "quit",
             Self::Edit => "edit",
             Self::NextTab => "next_tab",
@@ -226,6 +231,8 @@ fn app_event_from_terminal_event(event: Event) -> Option<AppEvent> {
     match event {
         Event::Key(key) if key.kind == KeyEventKind::Press => Some(AppEvent::Key(key)),
         Event::Resize(_, _) => Some(AppEvent::TerminalResized),
+        Event::FocusGained => Some(AppEvent::WindowFocusChanged(true)),
+        Event::FocusLost => Some(AppEvent::WindowFocusChanged(false)),
         _ => None,
     }
 }

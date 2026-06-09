@@ -14,10 +14,11 @@ mod self_update;
 mod startup_git;
 mod storage;
 mod task_diff;
+mod task_runtime;
 mod terminal;
 mod ui;
 
-use app::{App, TaskList};
+use app::App;
 use event::AppEvent;
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -59,12 +60,16 @@ fn run_app() -> Result<(), Box<dyn Error>> {
 
     let mut keybindings = event::KeyBindings::from_config(config_file.keybindings)?;
     let mut editors = config_file.editors;
+    let ui_config = config_file.ui;
     let task_files = storage::load_task_files(&paths.tasks_dir)?;
-    let mut app = App::new(task_lists_from_files(&task_files), clock::today_jst());
+    let mut app = App::new(
+        task_runtime::task_lists_from_files(&task_files),
+        clock::today_jst(),
+    );
     let before_task_file_read = logging::task_snapshots(app.tabs());
     for (index, task_file) in task_files.iter().enumerate() {
         let state_outcome =
-            reflect_task_file_status(task_file.status.clone(), &mut app, index, true);
+            task_runtime::reflect_task_file_status(task_file.status.clone(), &mut app, index, true);
         logger.log_task_file_status_read(&task_file.path, state_outcome)?;
     }
     logger.log_task_changes(
@@ -72,7 +77,7 @@ fn run_app() -> Result<(), Box<dyn Error>> {
         app.tabs(),
         logging::TaskChangeCause::TaskFileRead,
     )?;
-    persist_tasks(&mut app);
+    task_runtime::persist_tasks(&mut app);
 
     let _terminal_guard = terminal::TerminalGuard::enter()?;
     let mut terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
@@ -90,7 +95,7 @@ fn run_app() -> Result<(), Box<dyn Error>> {
         history_stats::spawn_history_stats(tx.clone(), paths.clone());
     }
 
-    terminal.draw(|frame| ui::draw(frame, &app, &keybindings))?;
+    terminal.draw(|frame| ui::draw(frame, &app, &keybindings, &ui_config))?;
     run_event_loop(
         &paths,
         &mut terminal,
@@ -102,6 +107,7 @@ fn run_app() -> Result<(), Box<dyn Error>> {
             tx,
             rx,
             startup_git_enabled,
+            ui_config,
         },
     )?;
 
@@ -112,6 +118,7 @@ struct EventLoopRuntime {
     tx: mpsc::Sender<AppEvent>,
     rx: mpsc::Receiver<AppEvent>,
     startup_git_enabled: bool,
+    ui_config: storage::UiConfig,
 }
 
 fn run_event_loop(
@@ -121,7 +128,7 @@ fn run_event_loop(
     keybindings: &mut event::KeyBindings,
     editors: &mut Vec<String>,
     logger: &logging::AppLogger,
-    runtime: EventLoopRuntime,
+    mut runtime: EventLoopRuntime,
 ) -> Result<(), Box<dyn Error>> {
     let mut pending_day_change = false;
 
@@ -137,7 +144,10 @@ fn run_event_loop(
                 } else if app.is_history_stats_screen() && app.history_stats().is_loading() {
                     app.tick_history_stats();
                 } else {
-                    should_draw = false;
+                    let blink_changed = runtime.ui_config.estimate_blink.enabled
+                        && app.estimate_blink_context()
+                        && app.tick_estimate_blink();
+                    should_draw = app.free_time_active() || blink_changed;
                 }
             }
             AppEvent::Key(key) => {
@@ -147,7 +157,7 @@ fn run_event_loop(
                 } else {
                     match action {
                         Some(event::KeyAction::Quit) => {
-                            persist_tasks(app);
+                            task_runtime::persist_tasks(app);
                             break;
                         }
                         Some(event::KeyAction::Edit) => {
@@ -206,10 +216,16 @@ fn run_event_loop(
                     );
                 }
             }
-            AppEvent::ConfigChanged => match reload_config(paths, keybindings, editors) {
-                Ok(()) => app.set_message("設定をhot reloadしました"),
-                Err(err) => app.set_message(err),
-            },
+            AppEvent::ConfigChanged => {
+                match reload_config(paths, keybindings, editors, &mut runtime.ui_config) {
+                    Ok(()) => app.set_message("設定をhot reloadしました"),
+                    Err(err) => app.set_message(err),
+                }
+            }
+            AppEvent::WindowFocusChanged(focused) => {
+                should_persist = false;
+                app.set_window_focused(focused);
+            }
             AppEvent::TasksChanged => {
                 let before_tabs = app.tabs().to_vec();
                 let before = logging::task_snapshots(app.tabs());
@@ -261,10 +277,10 @@ fn run_event_loop(
             }
         }
         if should_persist {
-            persist_tasks(app);
+            task_runtime::persist_tasks(app);
         }
         if should_draw {
-            terminal.draw(|frame| ui::draw(frame, app, keybindings))?;
+            terminal.draw(|frame| ui::draw(frame, app, keybindings, &runtime.ui_config))?;
         }
     }
 
@@ -275,6 +291,7 @@ fn event_should_persist(event: &AppEvent) -> bool {
     !matches!(
         event,
         AppEvent::TerminalResized
+            | AppEvent::WindowFocusChanged(_)
             | AppEvent::Tick
             | AppEvent::BackgroundWorkMessage(_)
             | AppEvent::StartupGitFinished(_)
@@ -292,7 +309,7 @@ fn handle_day_changed(
 ) {
     match reload_tasks(paths, app) {
         Ok(()) if startup_git_enabled => {
-            persist_tasks(app);
+            task_runtime::persist_tasks(app);
             *should_persist = false;
             app.start_background_work("日付変更前git snapshotを実行中です");
             git_snapshot::spawn_before_day_change_snapshot(
@@ -316,41 +333,6 @@ fn finish_day_change(app: &mut App, logger: &logging::AppLogger, snapshot_messag
             "日付変更前git snapshot: {message}。tasksを翌日化しました"
         )),
         None => app.set_message("tasksを翌日化しました"),
-    }
-}
-
-fn reflect_task_file_status(
-    status: Option<storage::TaskFileStatus>,
-    app: &mut App,
-    tab_index: usize,
-    update_message: bool,
-) -> logging::TaskFileStatusReadOutcome {
-    if let Some(status) = status {
-        if status.date == app.current_date {
-            app.apply_statuses(tab_index, &status.states);
-            if update_message {
-                app.set_message("task fileの状態を読み込みました");
-            }
-            logging::TaskFileStatusReadOutcome::Loaded
-        } else {
-            if update_message {
-                app.set_message("task fileの状態日付が今日ではないため未着手で表示します");
-            }
-            logging::TaskFileStatusReadOutcome::DateMismatch {
-                status_date: status.date,
-            }
-        }
-    } else {
-        logging::TaskFileStatusReadOutcome::Missing
-    }
-}
-
-fn persist_tasks(app: &mut App) {
-    let result = app.tabs().iter().try_for_each(|tab| {
-        storage::write_task_file_status(&tab.path, app.current_date, &tab.tasks)
-    });
-    if let Err(err) = result {
-        app.set_message(err);
     }
 }
 
@@ -386,12 +368,14 @@ fn reload_config(
     paths: &storage::AppPaths,
     keybindings: &mut event::KeyBindings,
     editors: &mut Vec<String>,
+    ui_config: &mut storage::UiConfig,
 ) -> Result<(), String> {
     storage::ensure_app_storage(paths)?;
     let config_file = storage::load_config_file(&paths.config_path)?;
 
     *keybindings = event::KeyBindings::from_config(config_file.keybindings)?;
     *editors = config_file.editors;
+    *ui_config = config_file.ui;
 
     Ok(())
 }
@@ -400,9 +384,9 @@ fn reload_tasks(paths: &storage::AppPaths, app: &mut App) -> Result<(), String> 
     storage::ensure_app_storage(paths)?;
     let task_files = storage::load_task_files(&paths.tasks_dir)?;
 
-    app.replace_tabs(task_lists_from_files(&task_files));
+    app.replace_tabs(task_runtime::task_lists_from_files(&task_files));
     for (index, task_file) in task_files.into_iter().enumerate() {
-        reflect_task_file_status(task_file.status, app, index, false);
+        task_runtime::reflect_task_file_status(task_file.status, app, index, false);
     }
 
     Ok(())
@@ -413,6 +397,7 @@ fn key_change_cause(action: Option<event::KeyAction>) -> logging::TaskChangeCaus
         Some(event::KeyAction::Advance) => logging::TaskChangeCause::KeyAdvance,
         Some(event::KeyAction::Hold) => logging::TaskChangeCause::KeyHold,
         Some(event::KeyAction::Defer) => logging::TaskChangeCause::KeyDefer,
+        Some(event::KeyAction::FreeTime) => logging::TaskChangeCause::KeyFreeTime,
         _ => logging::TaskChangeCause::KeyOther,
     }
 }
@@ -426,15 +411,4 @@ fn log_task_changes(
     if let Err(err) = logger.log_task_changes(before, app.tabs(), cause) {
         app.set_message(err);
     }
-}
-
-fn task_lists_from_files(task_files: &[storage::TaskFile]) -> Vec<TaskList> {
-    task_files
-        .iter()
-        .map(|task_file| TaskList {
-            label: task_file.label.clone(),
-            path: task_file.path.clone(),
-            tasks: task_file.task.clone(),
-        })
-        .collect()
 }
