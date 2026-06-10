@@ -9,7 +9,7 @@ use super::{
     MONOKAI_BG, MONOKAI_GREEN, MONOKAI_SELECTION, MONOKAI_YELLOW,
 };
 use crate::{
-    app::{App, DailyTask, TaskState},
+    app::{App, DailyTask, TaskState, FREE_TIME_TAB_LABEL, FREE_TIME_TASK_NAME},
     event::KeyBindings,
     history_stats::{HistoryStatsReport, TaskNameCount, TypicalTaskDuration},
     storage::{KeyBindingsConfig, MonokaiColorName, Task, UiConfig},
@@ -146,6 +146,31 @@ fn free_time_task_line_shows_cumulative_seconds() {
     assert!(text.contains("free time"));
     assert!(text.contains("累積free time 1分5秒"));
     assert!(!text.contains("見込み"));
+    assert!(!text.contains("完了"));
+    assert!(!text.contains("実施中"));
+}
+
+#[test]
+fn active_free_time_task_line_shows_in_progress_without_done() {
+    let mut app = App::new(
+        vec![task_list(
+            FREE_TIME_TAB_LABEL,
+            vec![task(FREE_TIME_TASK_NAME, 1, 1)],
+        )],
+        NaiveDate::from_ymd_opt(2026, 5, 18).unwrap(),
+    );
+    let keybindings = KeyBindings::from_config(KeyBindingsConfig::default()).unwrap();
+
+    app.handle_key(
+        KeyEvent::new(KeyCode::Char('f'), KeyModifiers::empty()),
+        &keybindings,
+    );
+    let lines = all_task_lines(&app);
+    let text = line_text(&lines[0]);
+
+    assert!(text.contains("free time"));
+    assert!(text.contains("実施中"));
+    assert!(!text.contains("完了"));
 }
 
 #[test]

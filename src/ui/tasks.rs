@@ -128,6 +128,7 @@ fn task_line_for_app<'a>(
     task_line_with_style(
         task,
         app.free_time_display_seconds(task),
+        app.free_time_active(),
         app.typical_task_duration_seconds(&task.name),
         show_completed_duration,
         estimate_style,
@@ -143,6 +144,7 @@ pub(super) fn task_line(
     task_line_with_style(
         task,
         task.free_time_seconds,
+        false,
         typical_duration_seconds,
         show_completed_duration,
         default_estimate_style(),
@@ -152,12 +154,13 @@ pub(super) fn task_line(
 fn task_line_with_style(
     task: &DailyTask,
     free_time_seconds: Option<u64>,
+    free_time_active: bool,
     typical_duration_seconds: Option<i64>,
     show_completed_duration: bool,
     estimate_style: Style,
 ) -> Line<'_> {
     if let Some(seconds) = free_time_seconds {
-        return free_time_task_line(task, seconds);
+        return free_time_task_line(task, seconds, free_time_active);
     }
 
     let mut spans = vec![
@@ -200,20 +203,23 @@ fn task_line_with_style(
     Line::from(spans)
 }
 
-fn free_time_task_line(task: &DailyTask, seconds: u64) -> Line<'_> {
-    Line::from(vec![
+fn free_time_task_line(task: &DailyTask, seconds: u64, active: bool) -> Line<'_> {
+    let mut spans = vec![
         Span::styled(&task.name, base_style()),
         Span::styled("  ", base_style()),
         Span::styled(
             format!("累積free time {}", format_elapsed_seconds(seconds as i64)),
             fg_style(MONOKAI_GREEN),
         ),
-        Span::styled("  ", base_style()),
-        Span::styled(
-            task.state.label(),
-            fg_style(state_color(task.state.label())),
-        ),
-    ])
+    ];
+
+    if active {
+        let label = TaskState::InProgress.label();
+        spans.push(Span::styled("  ", base_style()));
+        spans.push(Span::styled(label, fg_style(state_color(label))));
+    }
+
+    Line::from(spans)
 }
 
 fn estimate_style_for_one_line(app: &App, ui_config: &UiConfig) -> Style {
