@@ -13,6 +13,10 @@ impl App {
         self.estimate_blink_tick = 0;
     }
 
+    pub fn window_focused(&self) -> bool {
+        self.window_focused
+    }
+
     pub fn estimate_blink_phase(&self) -> bool {
         self.estimate_blink_phase
     }

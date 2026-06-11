@@ -25,6 +25,8 @@ const MONOKAI_GREEN: Color = Color::Rgb(166, 226, 46);
 const MONOKAI_YELLOW: Color = Color::Rgb(230, 219, 116);
 const MONOKAI_ORANGE: Color = Color::Rgb(253, 151, 31);
 const MONOKAI_BLUE: Color = Color::Rgb(102, 217, 239);
+const UNFOCUSED_FG: Color = Color::Rgb(80, 80, 80);
+const UNFOCUSED_BG: Color = MONOKAI_BG;
 const TAB_SEPARATOR: &str = " | ";
 const TAB_SEPARATOR_WIDTH: u16 = 3;
 
@@ -39,6 +41,7 @@ pub fn draw(frame: &mut Frame, app: &App, keybindings: &KeyBindings, ui_config: 
         if app.has_background_work() {
             draw_background_overlay(frame, frame.area(), app);
         }
+        draw_unfocused_overlay(frame, app);
         return;
     }
 
@@ -80,6 +83,20 @@ pub fn draw(frame: &mut Frame, app: &App, keybindings: &KeyBindings, ui_config: 
 
     if app.has_background_work() {
         draw_background_overlay(frame, frame.area(), app);
+    }
+
+    draw_unfocused_overlay(frame, app);
+}
+
+fn draw_unfocused_overlay(frame: &mut Frame, app: &App) {
+    if app.window_focused() {
+        return;
+    }
+
+    for cell in &mut frame.buffer_mut().content {
+        cell.fg = UNFOCUSED_FG;
+        cell.bg = UNFOCUSED_BG;
+        cell.modifier = Modifier::empty();
     }
 }
 

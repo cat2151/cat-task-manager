@@ -1,12 +1,12 @@
 use chrono::{DateTime, Local, NaiveDate};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use ratatui::style::Modifier;
-use ratatui::text::Line;
+use ratatui::{backend::TestBackend, style::Modifier, text::Line, Terminal};
 use std::path::PathBuf;
 
 use super::{
+    draw,
     tasks::{all_task_lines, one_line_task_lines, one_line_task_lines_with_config, task_line},
-    MONOKAI_BG, MONOKAI_GREEN, MONOKAI_SELECTION, MONOKAI_YELLOW,
+    MONOKAI_BG, MONOKAI_GREEN, MONOKAI_SELECTION, MONOKAI_YELLOW, UNFOCUSED_BG, UNFOCUSED_FG,
 };
 use crate::{
     app::{App, DailyTask, TaskState, FREE_TIME_TAB_LABEL, FREE_TIME_TASK_NAME},
@@ -42,6 +42,57 @@ fn line_text(line: &Line<'_>) -> String {
         .iter()
         .map(|span| span.content.as_ref())
         .collect()
+}
+
+fn draw_test_app(app: &App) -> TestBackend {
+    let keybindings = KeyBindings::from_config(KeyBindingsConfig::default()).unwrap();
+    let mut terminal = Terminal::new(TestBackend::new(64, 9)).unwrap();
+
+    terminal
+        .draw(|frame| draw(frame, app, &keybindings, &UiConfig::default()))
+        .unwrap();
+
+    terminal.backend().clone()
+}
+
+#[test]
+fn focused_draw_keeps_normal_colors() {
+    let app = App::new(
+        vec![task_list("0730", vec![task("breakfast", 1, 1)])],
+        NaiveDate::from_ymd_opt(2026, 5, 18).unwrap(),
+    );
+
+    let backend = draw_test_app(&app);
+
+    assert!(backend
+        .buffer()
+        .content()
+        .iter()
+        .any(|cell| cell.fg == MONOKAI_GREEN || cell.bg == MONOKAI_YELLOW));
+}
+
+#[test]
+fn unfocused_draw_renders_whole_screen_as_dark_gray() {
+    let mut app = App::new(
+        vec![task_list("0730", vec![task("breakfast", 1, 1)])],
+        NaiveDate::from_ymd_opt(2026, 5, 18).unwrap(),
+    );
+    app.set_window_focused(false);
+
+    let backend = draw_test_app(&app);
+    let cells = backend.buffer().content();
+    let text_cells = cells
+        .iter()
+        .filter(|cell| cell.symbol() != " ")
+        .collect::<Vec<_>>();
+
+    assert!(!text_cells.is_empty());
+    assert!(text_cells.iter().all(|cell| cell.fg == UNFOCUSED_FG));
+    assert!(text_cells.iter().all(|cell| cell.bg == UNFOCUSED_BG));
+    assert!(text_cells.iter().all(|cell| cell.modifier.is_empty()));
+    assert!(!cells
+        .iter()
+        .any(|cell| cell.fg == MONOKAI_GREEN || cell.bg == MONOKAI_YELLOW));
 }
 
 #[test]
