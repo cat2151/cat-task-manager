@@ -45,14 +45,46 @@ fn line_text(line: &Line<'_>) -> String {
 }
 
 fn draw_test_app(app: &App) -> TestBackend {
+    draw_test_app_with_size(app, 64, 9)
+}
+
+fn draw_test_app_with_size(app: &App, width: u16, height: u16) -> TestBackend {
     let keybindings = KeyBindings::from_config(KeyBindingsConfig::default()).unwrap();
-    let mut terminal = Terminal::new(TestBackend::new(64, 9)).unwrap();
+    let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
 
     terminal
         .draw(|frame| draw(frame, app, &keybindings, &UiConfig::default()))
         .unwrap();
 
     terminal.backend().clone()
+}
+
+fn buffer_symbol(backend: &TestBackend, width: u16, x: u16, y: u16) -> &str {
+    backend.buffer().content()[(y * width + x) as usize].symbol()
+}
+
+fn long_in_progress_app() -> App {
+    let mut app = App::new(
+        vec![task_list(
+            "0730",
+            vec![task(
+                "very long task name that pushes status out of the terminal",
+                1,
+                1,
+            )],
+        )],
+        NaiveDate::from_ymd_opt(2026, 5, 18).unwrap(),
+    );
+    app.tabs[0].tasks[0].state = TaskState::InProgress;
+    app.tabs[0].tasks[0].started_at = Some(timestamp("2026-05-18T09:00:00+09:00"));
+    app
+}
+
+fn assert_right_edge_in_progress_label(backend: &TestBackend, width: u16, y: u16) {
+    let x = width - 7;
+    assert_eq!(buffer_symbol(backend, width, x, y), "実");
+    assert_eq!(buffer_symbol(backend, width, x + 2, y), "施");
+    assert_eq!(buffer_symbol(backend, width, x + 4, y), "中");
 }
 
 #[test]
@@ -131,6 +163,10 @@ fn one_line_task_line_does_not_show_completed_duration() {
     let line = task_line(&task, None, false);
 
     assert!(!line_text(&line).contains("作業時間"));
+    assert!(line
+        .spans
+        .iter()
+        .all(|span| !span.style.add_modifier.contains(Modifier::SLOW_BLINK)));
 }
 
 #[test]
@@ -173,7 +209,7 @@ fn task_line_shows_estimated_duration_instead_of_order() {
     assert!(text.starts_with("見込み"));
     assert!(text.contains("30分"));
     assert!(!text.contains("12."));
-    assert!(estimate_span
+    assert!(!estimate_span
         .style
         .add_modifier
         .contains(Modifier::SLOW_BLINK));
@@ -222,6 +258,29 @@ fn active_free_time_task_line_shows_in_progress_without_done() {
     assert!(text.contains("free time"));
     assert!(text.contains("実施中"));
     assert!(!text.contains("完了"));
+}
+
+#[test]
+fn overflowing_in_progress_label_is_redrawn_at_right_edge() {
+    let app = long_in_progress_app();
+
+    let backend = draw_test_app_with_size(&app, 24, 9);
+
+    assert_right_edge_in_progress_label(&backend, 24, 4);
+}
+
+#[test]
+fn overflowing_in_progress_label_is_redrawn_at_right_edge_in_list() {
+    let mut app = long_in_progress_app();
+    let keybindings = KeyBindings::from_config(KeyBindingsConfig::default()).unwrap();
+    app.handle_key(
+        KeyEvent::new(KeyCode::Char('v'), KeyModifiers::empty()),
+        &keybindings,
+    );
+
+    let backend = draw_test_app_with_size(&app, 24, 9);
+
+    assert_right_edge_in_progress_label(&backend, 24, 4);
 }
 
 #[test]
@@ -283,7 +342,7 @@ fn focused_one_line_estimate_uses_configured_monokai_colors() {
 }
 
 #[test]
-fn unfocused_one_line_estimate_keeps_slow_blink_style() {
+fn unfocused_one_line_estimate_does_not_blink() {
     let mut app = App::new(
         vec![task_list("0730", vec![task("breakfast", 1, 1)])],
         NaiveDate::from_ymd_opt(2026, 5, 18).unwrap(),
@@ -297,14 +356,14 @@ fn unfocused_one_line_estimate_keeps_slow_blink_style() {
         .find(|span| span.content.contains("なし"))
         .unwrap();
 
-    assert!(estimate_span
+    assert!(!estimate_span
         .style
         .add_modifier
         .contains(Modifier::SLOW_BLINK));
 }
 
 #[test]
-fn started_one_line_estimate_keeps_slow_blink_style() {
+fn started_one_line_estimate_does_not_blink() {
     let mut app = App::new(
         vec![task_list("0730", vec![task("breakfast", 1, 1)])],
         NaiveDate::from_ymd_opt(2026, 5, 18).unwrap(),
@@ -318,7 +377,7 @@ fn started_one_line_estimate_keeps_slow_blink_style() {
         .find(|span| span.content.contains("なし"))
         .unwrap();
 
-    assert!(estimate_span
+    assert!(!estimate_span
         .style
         .add_modifier
         .contains(Modifier::SLOW_BLINK));

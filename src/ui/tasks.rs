@@ -1,7 +1,7 @@
 use chrono::Duration;
 use ratatui::{
     layout::Rect,
-    style::{Color, Modifier, Style},
+    style::{Color, Style},
     text::{Line, Span},
     widgets::{List, ListItem, ListState, Paragraph},
     Frame,
@@ -20,13 +20,16 @@ use super::{
 
 const ON_HOLD_ONE_LINE_NOTE: &str =
     "保留中です。このタブは止めて、他タブのタスクを実施してください";
+const LIST_HIGHLIGHT_SYMBOL: &str = "> ";
+const LIST_HIGHLIGHT_SYMBOL_WIDTH: u16 = 2;
 
 pub(super) fn draw_one_line(frame: &mut Frame, area: Rect, app: &App, ui_config: &UiConfig) {
     if let Some(lines) = one_line_task_lines_with_config(app, ui_config) {
-        let task = Paragraph::new(lines)
+        let task = Paragraph::new(lines.clone())
             .style(base_style())
             .block(task_block());
         frame.render_widget(task, area);
+        draw_one_line_overflow_labels(frame, area, &lines);
     } else {
         let empty = Paragraph::new(app.empty_visible_tasks_message())
             .style(base_style())
@@ -62,17 +65,11 @@ pub(super) fn one_line_task_lines_with_config<'a>(
 
 pub(super) fn draw_incomplete_list(frame: &mut Frame, area: Rect, app: &App) {
     let visible_tasks = app.visible_tasks();
-    let items: Vec<ListItem> = visible_tasks
+    let lines: Vec<Line<'_>> = visible_tasks
         .iter()
-        .map(|(_, task)| {
-            ListItem::new(task_line_for_app(
-                task,
-                app,
-                false,
-                default_estimate_style(),
-            ))
-        })
+        .map(|(_, task)| task_line_for_app(task, app, false, default_estimate_style()))
         .collect();
+    let items: Vec<ListItem> = lines.iter().cloned().map(ListItem::new).collect();
 
     if items.is_empty() {
         let empty = Paragraph::new(app.empty_visible_tasks_message())
@@ -86,14 +83,15 @@ pub(super) fn draw_incomplete_list(frame: &mut Frame, area: Rect, app: &App) {
             .style(base_style())
             .block(task_block())
             .highlight_style(emphasized_style(MONOKAI_YELLOW).bg(MONOKAI_SELECTION))
-            .highlight_symbol("> ");
+            .highlight_symbol(LIST_HIGHLIGHT_SYMBOL);
         frame.render_stateful_widget(list, area, &mut state);
+        draw_list_overflow_labels(frame, area, &lines, state.offset(), state.selected());
     }
 }
 
 pub(super) fn draw_all_list(frame: &mut Frame, area: Rect, app: &App) {
     let lines = all_task_lines(app);
-    let items: Vec<ListItem> = lines.into_iter().map(ListItem::new).collect();
+    let items: Vec<ListItem> = lines.iter().cloned().map(ListItem::new).collect();
 
     if items.is_empty() {
         let empty = Paragraph::new("タスクはありません")
@@ -107,8 +105,9 @@ pub(super) fn draw_all_list(frame: &mut Frame, area: Rect, app: &App) {
             .style(base_style())
             .block(task_block())
             .highlight_style(emphasized_style(MONOKAI_YELLOW).bg(MONOKAI_SELECTION))
-            .highlight_symbol("> ");
+            .highlight_symbol(LIST_HIGHLIGHT_SYMBOL);
         frame.render_stateful_widget(list, area, &mut state);
+        draw_list_overflow_labels(frame, area, &lines, state.offset(), state.selected());
     }
 }
 
@@ -222,6 +221,116 @@ fn free_time_task_line(task: &DailyTask, seconds: u64, active: bool) -> Line<'_>
     Line::from(spans)
 }
 
+fn draw_one_line_overflow_labels(frame: &mut Frame, area: Rect, lines: &[Line<'_>]) {
+    let Some(content_area) = task_content_area(area) else {
+        return;
+    };
+
+    for (index, line) in lines.iter().take(content_area.height as usize).enumerate() {
+        let row_area = Rect::new(
+            content_area.x,
+            content_area.y + index as u16,
+            content_area.width,
+            1,
+        );
+        draw_in_progress_overflow_label(frame, row_area, line, 0);
+    }
+}
+
+fn draw_list_overflow_labels(
+    frame: &mut Frame,
+    area: Rect,
+    lines: &[Line<'_>],
+    offset: usize,
+    selected: Option<usize>,
+) {
+    let Some(content_area) = task_content_area(area) else {
+        return;
+    };
+
+    for (index, line) in lines
+        .iter()
+        .enumerate()
+        .skip(offset)
+        .take(content_area.height as usize)
+    {
+        let row_area = Rect::new(
+            content_area.x,
+            content_area.y + (index - offset) as u16,
+            content_area.width,
+            1,
+        );
+        let content_offset = if selected == Some(index) {
+            LIST_HIGHLIGHT_SYMBOL_WIDTH
+        } else {
+            0
+        };
+        draw_in_progress_overflow_label(frame, row_area, line, content_offset);
+    }
+}
+
+fn draw_in_progress_overflow_label(
+    frame: &mut Frame,
+    row_area: Rect,
+    line: &Line<'_>,
+    content_offset: u16,
+) {
+    let Some((label_start, label_width)) = in_progress_label_bounds(line) else {
+        return;
+    };
+    let rendered_label_end = content_offset as usize + label_start + label_width;
+
+    if rendered_label_end <= row_area.width as usize || label_width > row_area.width as usize {
+        return;
+    }
+
+    let label = TaskState::InProgress.label();
+    let x = row_area
+        .x
+        .saturating_add(row_area.width.saturating_sub(label_width as u16));
+    let clear_x = x.saturating_sub(1).max(row_area.x);
+    let clear_width = row_area
+        .x
+        .saturating_add(row_area.width)
+        .saturating_sub(clear_x);
+    frame.buffer_mut().set_string(
+        clear_x,
+        row_area.y,
+        " ".repeat(clear_width as usize),
+        base_style(),
+    );
+    frame
+        .buffer_mut()
+        .set_string(x, row_area.y, label, fg_style(state_color(label)));
+}
+
+fn in_progress_label_bounds(line: &Line<'_>) -> Option<(usize, usize)> {
+    let label = TaskState::InProgress.label();
+    let mut start = 0;
+
+    for span in &line.spans {
+        if span.content.as_ref() == label {
+            return Some((start, span.width()));
+        }
+        start += span.width();
+    }
+
+    None
+}
+
+fn task_content_area(area: Rect) -> Option<Rect> {
+    if area.width <= 2 || area.height <= 2 {
+        return None;
+    }
+
+    Some(Rect::new(
+        area.x + 1,
+        area.y + 1,
+        area.width - 2,
+        area.height - 2,
+    ))
+}
+
 fn estimate_style_for_one_line(app: &App, ui_config: &UiConfig) -> Style {
     if !ui_config.estimate_blink.enabled || !app.estimate_blink_context() {
         return default_estimate_style();
@@ -239,7 +348,7 @@ fn estimate_style_for_one_line(app: &App, ui_config: &UiConfig) -> Style {
 }
 
 fn default_estimate_style() -> Style {
-    emphasized_style(MONOKAI_GREEN).add_modifier(Modifier::SLOW_BLINK)
+    emphasized_style(MONOKAI_GREEN)
 }
 
 fn completed_work_duration(task: &DailyTask) -> Option<Duration> {

@@ -19,6 +19,12 @@ fn estimate_blink_context_requires_not_started_selected_task() {
 
     assert!(app.estimate_blink_context());
 
+    app.toggle_view_mode();
+    assert!(!app.estimate_blink_context());
+    app.toggle_view_mode();
+    app.toggle_view_mode();
+    assert!(app.estimate_blink_context());
+
     app.advance_selected();
     assert!(!app.estimate_blink_context());
 
