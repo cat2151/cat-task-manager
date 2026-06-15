@@ -45,7 +45,9 @@ impl App {
                     task.state = TaskState::InProgress;
                     task.started_at = Some(now);
                     task.completed_at = None;
-                    self.message = format!("開始しました: {}", task.name);
+                    let name = task.name.clone();
+                    let stopped = self.auto_stop_free_time();
+                    self.message = format!("開始しました: {name}{}", free_time_stopped_suffix(stopped));
                 } else {
                     self.message = "前のタスクが完了していません".to_string();
                 }
@@ -69,7 +71,9 @@ impl App {
                     task.started_at = Some(now);
                 }
                 task.completed_at = None;
-                self.message = format!("再開しました: {}", task.name);
+                let name = task.name.clone();
+                let stopped = self.auto_stop_free_time();
+                self.message = format!("再開しました: {name}{}", free_time_stopped_suffix(stopped));
             }
             TaskState::OnHold => {
                 self.message = "進める前に保留を解除してください".to_string();
@@ -92,7 +96,9 @@ impl App {
             }
             TaskState::OnHold => {
                 task.state = TaskState::InProgress;
-                self.message = format!("再開しました: {}", task.name);
+                let name = task.name.clone();
+                let stopped = self.auto_stop_free_time();
+                self.message = format!("再開しました: {name}{}", free_time_stopped_suffix(stopped));
             }
             _ => {
                 self.message = "保留できるのは実施中のタスクだけです".to_string();
@@ -115,12 +121,16 @@ impl App {
                 self.clamp_selection();
             }
             TaskState::Deferred => {
-                task.state = if task.started_at.is_some() {
+                let resumed = task.started_at.is_some();
+                task.state = if resumed {
                     TaskState::InProgress
                 } else {
                     TaskState::NotStarted
                 };
-                self.message = format!("後回しを解除しました: {}", task.name);
+                let name = task.name.clone();
+                let stopped = resumed && self.auto_stop_free_time();
+                self.message =
+                    format!("後回しを解除しました: {name}{}", free_time_stopped_suffix(stopped));
             }
             _ => {
                 self.message = "後回しにできるのは未着手か実施中のタスクだけです".to_string();
@@ -145,5 +155,13 @@ impl App {
         } else {
             "ヘルプを閉じました".to_string()
         };
+    }
+}
+
+fn free_time_stopped_suffix(stopped: bool) -> &'static str {
+    if stopped {
+        "（free timeを停止しました）"
+    } else {
+        ""
     }
 }

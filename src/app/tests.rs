@@ -421,6 +421,60 @@ fn free_time_key_resumes_first_on_hold_task_and_selects_its_tab() {
 }
 
 #[test]
+fn starting_a_task_auto_stops_free_time() {
+    let mut app = App::new(
+        vec![
+            task_list("0730", vec![task("a", 1, 1)]),
+            task_list(FREE_TIME_TAB_LABEL, vec![task(FREE_TIME_TASK_NAME, 1, 1)]),
+        ],
+        NaiveDate::from_ymd_opt(2026, 5, 18).unwrap(),
+    );
+    let keybindings = KeyBindings::from_config(KeyBindingsConfig::default()).unwrap();
+
+    app.handle_key(
+        KeyEvent::new(KeyCode::Char('f'), KeyModifiers::empty()),
+        &keybindings,
+    );
+    assert!(app.free_time_active());
+
+    app.select_previous_tab();
+    app.advance_selected();
+
+    assert!(!app.free_time_active());
+    assert_eq!(app.tabs[0].tasks[0].state, TaskState::InProgress);
+    assert!(app.message().contains("free timeを停止しました"));
+}
+
+#[test]
+fn releasing_hold_auto_stops_free_time() {
+    let mut app = App::new(
+        vec![
+            task_list("0730", vec![task("a", 1, 1)]),
+            task_list(FREE_TIME_TAB_LABEL, vec![task(FREE_TIME_TASK_NAME, 1, 1)]),
+        ],
+        NaiveDate::from_ymd_opt(2026, 5, 18).unwrap(),
+    );
+    let keybindings = KeyBindings::from_config(KeyBindingsConfig::default()).unwrap();
+
+    // task aを実施中にしてからfree timeを開始すると、aは保留になる。
+    app.advance_selected();
+    app.handle_key(
+        KeyEvent::new(KeyCode::Char('f'), KeyModifiers::empty()),
+        &keybindings,
+    );
+    assert!(app.free_time_active());
+    assert_eq!(app.tabs[0].tasks[0].state, TaskState::OnHold);
+
+    // 保留を解除すると矛盾するため、free timeは自動停止する。
+    app.select_previous_tab();
+    app.toggle_hold_selected();
+
+    assert!(!app.free_time_active());
+    assert_eq!(app.tabs[0].tasks[0].state, TaskState::InProgress);
+    assert!(app.message().contains("free timeを停止しました"));
+}
+
+#[test]
 fn day_change_resets_free_time_seconds() {
     let mut app = App::new(
         vec![task_list(

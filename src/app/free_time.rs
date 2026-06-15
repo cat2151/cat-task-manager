@@ -46,6 +46,21 @@ impl App {
         }
     }
 
+    /// free time計測中に他のtaskを実施中にすると矛盾するため、free time計測を停止する。
+    /// `stop_free_time`と違い、保留taskの再開や選択移動は行わない（呼び出し側が状態を変えるため）。
+    /// 計測を停止した場合のみ`true`を返す。
+    pub(super) fn auto_stop_free_time(&mut self) -> bool {
+        if !self.free_time_active {
+            return false;
+        }
+
+        self.sync_free_time_elapsed();
+        self.free_time_active = false;
+        self.free_time_started_at = None;
+        self.prepare_free_time_task();
+        true
+    }
+
     pub(super) fn toggle_free_time(&mut self) {
         if self.free_time_active {
             self.stop_free_time();
