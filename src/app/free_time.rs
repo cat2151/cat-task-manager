@@ -13,6 +13,25 @@ impl App {
         self.free_time_active
     }
 
+    pub(crate) fn has_in_progress_task(&self) -> bool {
+        self.tabs
+            .iter()
+            .filter(|tab| tab.label != FREE_TIME_TAB_LABEL)
+            .flat_map(|tab| &tab.tasks)
+            .any(|task| task.state == TaskState::InProgress)
+    }
+
+    pub(crate) fn start_free_time_automatically(&mut self, idle_seconds: u64) -> bool {
+        if self.free_time_active || self.has_in_progress_task() || !self.start_free_time() {
+            return false;
+        }
+
+        self.message = format!(
+            "taskを実施していない状態が{idle_seconds}秒続いたため、free timeを開始しました"
+        );
+        true
+    }
+
     pub fn free_time_display_seconds(&self, task: &DailyTask) -> Option<u64> {
         let base = task.free_time_seconds?;
         let active_seconds = if self.free_time_active {
@@ -69,22 +88,25 @@ impl App {
         }
     }
 
-    fn start_free_time(&mut self) {
+    fn start_free_time(&mut self) -> bool {
         self.prepare_free_time_task();
+        if self.free_time_tab_index().is_none() {
+            self.message = "free_time tabがありません".to_string();
+            return false;
+        }
+
         let held_count = self.hold_in_progress_tasks_except_free_time();
         self.free_time_active = true;
         self.free_time_started_at = Some(Local::now());
 
-        if !self.select_free_time_tab() {
-            self.message = "free_time tabがありません".to_string();
-            return;
-        }
+        self.select_free_time_tab();
 
         self.message = if held_count == 0 {
             "free timeを開始しました".to_string()
         } else {
             format!("free timeを開始しました。{held_count}件を保留しました")
         };
+        true
     }
 
     fn stop_free_time(&mut self) {

@@ -36,6 +36,15 @@ fn estimate_blink_value(path: &Path, key: &str) -> Option<toml::Value> {
         .cloned()
 }
 
+fn auto_free_time_value(path: &Path, key: &str) -> Option<toml::Value> {
+    let raw = fs::read_to_string(path).unwrap();
+    let value: toml::Value = toml::from_str(&raw).unwrap();
+    value
+        .get("auto_free_time")
+        .and_then(|table| table.get(key))
+        .cloned()
+}
+
 #[test]
 fn normalize_editors_uses_default_when_empty() {
     assert_eq!(normalize_editors(vec![]), default_editors());
@@ -118,6 +127,30 @@ fn config_defaults_add_startup_git_table() {
 }
 
 #[test]
+fn config_defaults_add_disabled_auto_free_time_table() {
+    let path = temp_config_path("add-auto-free-time");
+    fs::write(&path, "editors = [\"nvim\"]\n").unwrap();
+
+    ensure_config_defaults(&path).unwrap();
+
+    assert_eq!(
+        auto_free_time_value(&path, "enabled").and_then(|value| value.as_bool()),
+        Some(false)
+    );
+    assert_eq!(
+        auto_free_time_value(&path, "idle_seconds").and_then(|value| value.as_integer()),
+        Some(60)
+    );
+    assert_eq!(
+        auto_free_time_value(&path, "active_hours")
+            .and_then(|value| value.as_str().map(str::to_string)),
+        Some("09:00-17:00".to_string())
+    );
+
+    fs::remove_file(path).unwrap();
+}
+
+#[test]
 fn config_defaults_add_ui_estimate_blink_table() {
     let path = temp_config_path("add-ui-estimate-blink");
     fs::write(&path, "editors = [\"nvim\"]\n").unwrap();
@@ -148,6 +181,11 @@ fn default_config_is_config_only() {
 
     assert_eq!(file.editors, default_editors());
     assert!(!file.startup_git.auto_commit_and_push);
+    assert!(!file.auto_free_time.enabled);
+    assert_eq!(file.auto_free_time.idle_seconds, 60);
+    assert!(file
+        .auto_free_time
+        .is_active_at(chrono::NaiveTime::from_hms_opt(9, 0, 0).unwrap()));
     assert!(file.ui.estimate_blink.enabled);
     assert_eq!(file.ui.estimate_blink.foreground, MonokaiColorName::Green);
     assert_eq!(file.ui.estimate_blink.background, MonokaiColorName::Bg);

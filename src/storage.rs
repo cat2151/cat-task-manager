@@ -6,7 +6,9 @@ mod config;
 mod paths;
 mod tasks;
 
-pub use config::{load_config_file, KeyBindingsConfig, MonokaiColorName, UiConfig};
+pub use config::{
+    load_config_file, AutoFreeTimeConfig, KeyBindingsConfig, MonokaiColorName, UiConfig,
+};
 pub use paths::{app_paths, ensure_app_storage, AppPaths};
 pub use tasks::{
     is_task_file_path, load_task_file_content, load_task_files, write_task_file_status, Task,

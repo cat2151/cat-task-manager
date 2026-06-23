@@ -2,7 +2,9 @@ use std::{collections::HashSet, fs, path::Path};
 
 use serde::{de::Error as _, Deserialize, Deserializer};
 
+mod auto_free_time;
 mod ui;
+pub use auto_free_time::AutoFreeTimeConfig;
 pub use ui::{MonokaiColorName, UiConfig};
 
 const DEFAULT_EDITORS: [&str; 4] = ["fresh", "zed", "nvim", "code"];
@@ -30,6 +32,11 @@ const DEFAULT_CONFIG: &str = r#"editors = ["fresh", "zed", "nvim", "code"]
 
 [startup_git]
 auto_commit_and_push = false
+
+[auto_free_time]
+enabled = false
+idle_seconds = 60
+active_hours = "09:00-17:00"
 
 [ui.estimate_blink]
 enabled = true
@@ -124,6 +131,7 @@ pub struct ConfigFile {
     pub keybindings: KeyBindingsConfig,
     pub editors: Vec<String>,
     pub startup_git: StartupGitConfig,
+    pub auto_free_time: AutoFreeTimeConfig,
     pub ui: UiConfig,
 }
 
@@ -136,6 +144,8 @@ struct RawConfigFile {
     editors: Vec<String>,
     #[serde(default)]
     startup_git: StartupGitConfig,
+    #[serde(default)]
+    auto_free_time: AutoFreeTimeConfig,
     #[serde(default)]
     ui: UiConfig,
 }
@@ -177,6 +187,7 @@ pub fn load_config_file(path: impl AsRef<Path>) -> Result<ConfigFile, String> {
         keybindings: file.keybindings,
         editors: normalize_editors(file.editors),
         startup_git: file.startup_git,
+        auto_free_time: file.auto_free_time,
         ui: file.ui,
     })
 }
@@ -291,6 +302,7 @@ fn ensure_config_defaults(path: &Path) -> Result<(), String> {
         changed = true;
     }
 
+    changed |= auto_free_time::ensure_auto_free_time_defaults(table, path)?;
     changed |= ui::ensure_ui_defaults(table, path)?;
 
     if changed {

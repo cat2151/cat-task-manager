@@ -3,6 +3,11 @@ editors = ["fresh", "zed", "nvim", "code"]
 [startup_git]
 auto_commit_and_push = false
 
+[auto_free_time]
+enabled = false
+idle_seconds = 60
+active_hours = "09:00-17:00"
+
 [ui.estimate_blink]
 enabled = true
 foreground = "green"

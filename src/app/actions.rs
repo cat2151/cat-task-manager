@@ -47,7 +47,8 @@ impl App {
                     task.completed_at = None;
                     let name = task.name.clone();
                     let stopped = self.auto_stop_free_time();
-                    self.message = format!("開始しました: {name}{}", free_time_stopped_suffix(stopped));
+                    self.message =
+                        format!("開始しました: {name}{}", free_time_stopped_suffix(stopped));
                 } else {
                     self.message = "前のタスクが完了していません".to_string();
                 }
@@ -129,8 +130,10 @@ impl App {
                 };
                 let name = task.name.clone();
                 let stopped = resumed && self.auto_stop_free_time();
-                self.message =
-                    format!("後回しを解除しました: {name}{}", free_time_stopped_suffix(stopped));
+                self.message = format!(
+                    "後回しを解除しました: {name}{}",
+                    free_time_stopped_suffix(stopped)
+                );
             }
             _ => {
                 self.message = "後回しにできるのは未着手か実施中のタスクだけです".to_string();

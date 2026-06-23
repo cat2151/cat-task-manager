@@ -87,13 +87,18 @@
 
 ## 設定の形
 
-`config.toml` はエディタ候補、キーバインド、起動時 git snapshot の設定だけを持つ。タスクは書かない。
+`config.toml` はエディタ候補、キーバインド、起動時 git snapshot、free time自動開始の設定だけを持つ。タスクは書かない。
 
 ```toml
 editors = ["fresh", "zed", "nvim", "code"]
 
 [startup_git]
 auto_commit_and_push = false
+
+[auto_free_time]
+enabled = false
+idle_seconds = 60
+active_hours = "09:00-17:00"
 
 [keybindings]
 j = "next"
@@ -116,6 +121,8 @@ s = "stats"
 ```
 
 `startup_git.auto_commit_and_push = true` のときだけ、起動時に1日1回、`%LOCALAPPDATA%\cat-task-manager` を git commit して push する。
+
+`auto_free_time.enabled = true` のときだけ、`active_hours` の時間帯に実施中taskがない状態が `idle_seconds` 続くとfree timeを自動開始する。終了時刻は時間帯に含まない。`22:00-02:00` のような日跨ぎも指定できる。
 
 保存場所は Windows の `AppData Local` 配下にまとめる。
 

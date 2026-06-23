@@ -3,6 +3,7 @@ use std::{env, error::Error, io, path::Path, sync::mpsc};
 use ratatui::{backend::CrosstermBackend, Terminal};
 
 mod app;
+mod auto_free_time;
 mod cli;
 mod clock;
 mod editor;
@@ -19,6 +20,7 @@ mod terminal;
 mod ui;
 
 use app::App;
+use auto_free_time::AutoFreeTimeTracker;
 use event::AppEvent;
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -57,6 +59,7 @@ fn run_app() -> Result<(), Box<dyn Error>> {
 
     let config_file = storage::load_config_file(&paths.config_path)?;
     let startup_git_enabled = config_file.startup_git.auto_commit_and_push;
+    let auto_free_time = AutoFreeTimeTracker::new(config_file.auto_free_time);
 
     let mut keybindings = event::KeyBindings::from_config(config_file.keybindings)?;
     let mut editors = config_file.editors;
@@ -107,6 +110,7 @@ fn run_app() -> Result<(), Box<dyn Error>> {
             tx,
             rx,
             startup_git_enabled,
+            auto_free_time,
             ui_config,
         },
     )?;
@@ -118,6 +122,7 @@ struct EventLoopRuntime {
     tx: mpsc::Sender<AppEvent>,
     rx: mpsc::Receiver<AppEvent>,
     startup_git_enabled: bool,
+    auto_free_time: AutoFreeTimeTracker,
     ui_config: storage::UiConfig,
 }
 
@@ -139,7 +144,11 @@ fn run_event_loop(
 
         match app_event {
             AppEvent::Tick => {
-                if app.has_background_work() {
+                let auto_free_time_started = !app.has_background_work()
+                    && runtime.auto_free_time.tick(app, clock::now_jst());
+                if auto_free_time_started {
+                    should_persist = true;
+                } else if app.has_background_work() {
                     app.tick_background_work();
                 } else if app.is_history_stats_screen() && app.history_stats().is_loading() {
                     app.tick_history_stats();
@@ -217,7 +226,13 @@ fn run_event_loop(
                 }
             }
             AppEvent::ConfigChanged => {
-                match reload_config(paths, keybindings, editors, &mut runtime.ui_config) {
+                match reload_config(
+                    paths,
+                    keybindings,
+                    editors,
+                    &mut runtime.auto_free_time,
+                    &mut runtime.ui_config,
+                ) {
                     Ok(()) => app.set_message("設定をhot reloadしました"),
                     Err(err) => app.set_message(err),
                 }
@@ -368,6 +383,7 @@ fn reload_config(
     paths: &storage::AppPaths,
     keybindings: &mut event::KeyBindings,
     editors: &mut Vec<String>,
+    auto_free_time: &mut AutoFreeTimeTracker,
     ui_config: &mut storage::UiConfig,
 ) -> Result<(), String> {
     storage::ensure_app_storage(paths)?;
@@ -375,6 +391,7 @@ fn reload_config(
 
     *keybindings = event::KeyBindings::from_config(config_file.keybindings)?;
     *editors = config_file.editors;
+    auto_free_time.update_config(config_file.auto_free_time);
     *ui_config = config_file.ui;
 
     Ok(())
