@@ -144,9 +144,12 @@ fn run_event_loop(
 
         match app_event {
             AppEvent::Tick => {
-                let auto_free_time_started = !app.has_background_work()
-                    && runtime.auto_free_time.tick(app, clock::now_jst());
-                if auto_free_time_started {
+                let allow_auto_start = !app.has_background_work();
+                let free_time_changed =
+                    runtime
+                        .auto_free_time
+                        .tick(app, clock::now_jst(), allow_auto_start);
+                if free_time_changed {
                     should_persist = true;
                 } else if app.has_background_work() {
                     app.tick_background_work();
@@ -201,7 +204,13 @@ fn run_event_loop(
                             Ok(()) => {
                                 let before = logging::task_snapshots(app.tabs());
                                 let cause = key_change_cause(action);
-                                app.handle_key(key, keybindings);
+                                if action == Some(event::KeyAction::FreeTime) {
+                                    runtime
+                                        .auto_free_time
+                                        .toggle_manually(app, clock::now_jst());
+                                } else {
+                                    app.handle_key(key, keybindings);
+                                }
                                 log_task_changes(logger, app, &before, cause);
                             }
                             Err(err) => app.set_message(err),

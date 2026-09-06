@@ -1,4 +1,4 @@
-use chrono::{DateTime, Local};
+use chrono::{DateTime, FixedOffset, Local};
 
 use super::{App, DailyTask, TaskLocation, TaskState, FREE_TIME_TAB_LABEL};
 
@@ -21,8 +21,15 @@ impl App {
             .any(|task| task.state == TaskState::InProgress)
     }
 
-    pub(crate) fn start_free_time_automatically(&mut self, idle_seconds: u64) -> bool {
-        if self.free_time_active || self.has_in_progress_task() || !self.start_free_time() {
+    pub(crate) fn start_free_time_automatically(
+        &mut self,
+        idle_seconds: u64,
+        now: DateTime<FixedOffset>,
+    ) -> bool {
+        if self.free_time_active
+            || self.has_in_progress_task()
+            || !self.start_free_time_at(now.with_timezone(&Local))
+        {
             return false;
         }
 
@@ -44,11 +51,14 @@ impl App {
     }
 
     pub fn sync_free_time_elapsed(&mut self) {
+        self.sync_free_time_elapsed_at(Local::now());
+    }
+
+    fn sync_free_time_elapsed_at(&mut self, now: DateTime<Local>) {
         if !self.free_time_active {
             return;
         }
 
-        let now = Local::now();
         let elapsed_seconds = self
             .free_time_started_at
             .map(|started_at| elapsed_seconds_since(started_at, now))
@@ -66,7 +76,7 @@ impl App {
     }
 
     /// free time計測中に他のtaskを実施中にすると矛盾するため、free time計測を停止する。
-    /// `stop_free_time`と違い、保留taskの再開や選択移動は行わない（呼び出し側が状態を変えるため）。
+    /// 手動停止と違い、保留taskの再開や選択移動は行わない（呼び出し側が状態を変えるため）。
     /// 計測を停止した場合のみ`true`を返す。
     pub(super) fn auto_stop_free_time(&mut self) -> bool {
         if !self.free_time_active {
@@ -81,14 +91,22 @@ impl App {
     }
 
     pub(super) fn toggle_free_time(&mut self) {
+        self.toggle_free_time_at_local(Local::now());
+    }
+
+    pub(crate) fn toggle_free_time_at(&mut self, now: DateTime<FixedOffset>) {
+        self.toggle_free_time_at_local(now.with_timezone(&Local));
+    }
+
+    fn toggle_free_time_at_local(&mut self, now: DateTime<Local>) {
         if self.free_time_active {
-            self.stop_free_time();
+            self.stop_free_time_at(now);
         } else {
-            self.start_free_time();
+            self.start_free_time_at(now);
         }
     }
 
-    fn start_free_time(&mut self) -> bool {
+    fn start_free_time_at(&mut self, now: DateTime<Local>) -> bool {
         self.prepare_free_time_task();
         if self.free_time_tab_index().is_none() {
             self.message = "free_time tabがありません".to_string();
@@ -97,7 +115,7 @@ impl App {
 
         let held_count = self.hold_in_progress_tasks_except_free_time();
         self.free_time_active = true;
-        self.free_time_started_at = Some(Local::now());
+        self.free_time_started_at = Some(now);
 
         self.select_free_time_tab();
 
@@ -109,8 +127,8 @@ impl App {
         true
     }
 
-    fn stop_free_time(&mut self) {
-        self.sync_free_time_elapsed();
+    fn stop_free_time_at(&mut self, now: DateTime<Local>) {
+        self.sync_free_time_elapsed_at(now);
         self.free_time_active = false;
         self.free_time_started_at = None;
         self.prepare_free_time_task();
@@ -121,6 +139,29 @@ impl App {
             self.message = "free timeを終了しました。再開する保留taskはありません".to_string();
             self.clamp_selection();
         }
+    }
+
+    pub(crate) fn stop_free_time_at_active_hours_end(
+        &mut self,
+        ended_at: DateTime<FixedOffset>,
+    ) -> bool {
+        if !self.free_time_active {
+            return false;
+        }
+
+        self.sync_free_time_elapsed_at(ended_at.with_timezone(&Local));
+        self.free_time_active = false;
+        self.free_time_started_at = None;
+        self.prepare_free_time_task();
+
+        if let Some(task_name) = self.resume_first_on_hold_task() {
+            self.message =
+                format!("active_hours終了のためfree timeを終了して再開しました: {task_name}");
+        } else {
+            self.message = "active_hours終了のためfree timeを終了しました".to_string();
+            self.clamp_selection();
+        }
+        true
     }
 
     fn prepare_free_time_task(&mut self) {

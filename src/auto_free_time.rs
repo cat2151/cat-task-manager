@@ -21,9 +21,18 @@ impl AutoFreeTimeTracker {
         self.idle_since = None;
     }
 
-    pub fn tick(&mut self, app: &mut App, now: DateTime<FixedOffset>) -> bool {
+    pub fn tick(
+        &mut self,
+        app: &mut App,
+        now: DateTime<FixedOffset>,
+        allow_auto_start: bool,
+    ) -> bool {
+        if !self.config.is_active_at(now.time()) {
+            return self.enforce_active_hours(app, now);
+        }
+
         if !self.config.enabled
-            || !self.config.is_active_at(now.time())
+            || !allow_auto_start
             || app.free_time_active()
             || app.has_in_progress_task()
         {
@@ -40,7 +49,34 @@ impl AutoFreeTimeTracker {
         }
 
         self.idle_since = None;
-        app.start_free_time_automatically(self.config.idle_seconds)
+        app.start_free_time_automatically(self.config.idle_seconds, now)
+    }
+
+    pub fn enforce_active_hours(&mut self, app: &mut App, now: DateTime<FixedOffset>) -> bool {
+        if self.config.is_active_at(now.time()) {
+            return false;
+        }
+
+        self.idle_since = None;
+        self.stop_at_active_hours_end(app, now)
+    }
+
+    pub fn toggle_manually(&mut self, app: &mut App, now: DateTime<FixedOffset>) -> bool {
+        self.idle_since = None;
+        if !self.config.is_active_at(now.time()) {
+            if app.free_time_active() {
+                return self.stop_at_active_hours_end(app, now);
+            }
+            app.set_message("active_hours外ではfree timeを開始できません");
+            return false;
+        }
+
+        app.toggle_free_time_at(now);
+        true
+    }
+
+    fn stop_at_active_hours_end(&self, app: &mut App, now: DateTime<FixedOffset>) -> bool {
+        app.stop_free_time_at_active_hours_end(self.config.active_end_at_or_before(now))
     }
 }
 
@@ -99,9 +135,9 @@ active_hours = "{active_hours}"
         let mut app = app();
         let mut tracker = tracker("09:00-17:00");
 
-        assert!(!tracker.tick(&mut app, now("2026-06-23T09:00:00+09:00")));
-        assert!(!tracker.tick(&mut app, now("2026-06-23T09:00:59+09:00")));
-        assert!(tracker.tick(&mut app, now("2026-06-23T09:01:00+09:00")));
+        assert!(!tracker.tick(&mut app, now("2026-06-23T09:00:00+09:00"), true));
+        assert!(!tracker.tick(&mut app, now("2026-06-23T09:00:59+09:00"), true));
+        assert!(tracker.tick(&mut app, now("2026-06-23T09:01:00+09:00"), true));
         assert!(app.free_time_active());
         assert_eq!(app.current_tab_label(), FREE_TIME_TAB_LABEL);
     }
@@ -111,14 +147,14 @@ active_hours = "{active_hours}"
         let mut app = app();
         let mut tracker = tracker("09:00-17:00");
 
-        tracker.tick(&mut app, now("2026-06-23T09:00:00+09:00"));
+        tracker.tick(&mut app, now("2026-06-23T09:00:00+09:00"), true);
         app.tabs[0].tasks[0].state = TaskState::InProgress;
-        tracker.tick(&mut app, now("2026-06-23T09:00:30+09:00"));
+        tracker.tick(&mut app, now("2026-06-23T09:00:30+09:00"), true);
         app.tabs[0].tasks[0].state = TaskState::Done;
 
-        assert!(!tracker.tick(&mut app, now("2026-06-23T09:01:00+09:00")));
-        assert!(!tracker.tick(&mut app, now("2026-06-23T09:01:59+09:00")));
-        assert!(tracker.tick(&mut app, now("2026-06-23T09:02:00+09:00")));
+        assert!(!tracker.tick(&mut app, now("2026-06-23T09:01:00+09:00"), true));
+        assert!(!tracker.tick(&mut app, now("2026-06-23T09:01:59+09:00"), true));
+        assert!(tracker.tick(&mut app, now("2026-06-23T09:02:00+09:00"), true));
     }
 
     #[test]
@@ -126,8 +162,61 @@ active_hours = "{active_hours}"
         let mut app = app();
         let mut tracker = tracker("09:00-17:00");
 
-        tracker.tick(&mut app, now("2026-06-23T16:59:30+09:00"));
-        assert!(!tracker.tick(&mut app, now("2026-06-23T17:00:30+09:00")));
+        tracker.tick(&mut app, now("2026-06-23T16:59:30+09:00"), true);
+        assert!(!tracker.tick(&mut app, now("2026-06-23T17:00:30+09:00"), true));
         assert!(!app.free_time_active());
+    }
+
+    #[test]
+    fn leaving_active_hours_stops_at_end_boundary() {
+        let mut app = app();
+        let mut tracker = tracker("09:00-17:00");
+
+        tracker.tick(&mut app, now("2026-06-23T16:58:00+09:00"), true);
+        assert!(tracker.tick(&mut app, now("2026-06-23T16:59:00+09:00"), true));
+        assert!(tracker.tick(&mut app, now("2026-06-23T18:30:00+09:00"), true));
+
+        assert!(!app.free_time_active());
+        assert_eq!(app.tabs[1].tasks[0].free_time_seconds, Some(60));
+    }
+
+    #[test]
+    fn cross_midnight_active_hours_stop_at_end_boundary() {
+        let mut app = app();
+        let mut tracker = tracker("22:00-02:00");
+
+        tracker.tick(&mut app, now("2026-06-23T23:58:00+09:00"), true);
+        assert!(tracker.tick(&mut app, now("2026-06-23T23:59:00+09:00"), true));
+        assert!(tracker.tick(&mut app, now("2026-06-24T03:00:00+09:00"), true));
+
+        assert!(!app.free_time_active());
+        assert_eq!(
+            app.tabs[1].tasks[0].free_time_seconds,
+            Some(2 * 60 * 60 + 60)
+        );
+    }
+
+    #[test]
+    fn background_work_prevents_start_but_not_boundary_stop() {
+        let mut app = app();
+        let mut tracker = tracker("09:00-17:00");
+
+        tracker.tick(&mut app, now("2026-06-23T16:58:00+09:00"), true);
+        assert!(tracker.tick(&mut app, now("2026-06-23T16:59:00+09:00"), true));
+        assert!(tracker.tick(&mut app, now("2026-06-23T17:30:00+09:00"), false));
+
+        assert!(!app.free_time_active());
+        assert_eq!(app.tabs[1].tasks[0].free_time_seconds, Some(60));
+    }
+
+    #[test]
+    fn manual_free_time_cannot_start_outside_active_hours() {
+        let mut app = app();
+        let mut tracker = tracker("09:00-17:00");
+
+        assert!(!tracker.toggle_manually(&mut app, now("2026-06-23T08:00:00+09:00")));
+
+        assert!(!app.free_time_active());
+        assert!(app.message().contains("active_hours外"));
     }
 }

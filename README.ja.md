@@ -122,7 +122,9 @@ s = "stats"
 
 `startup_git.auto_commit_and_push = true` のときだけ、起動時に1日1回、`%LOCALAPPDATA%\cat-task-manager` を git commit して push する。
 
-`auto_free_time.enabled = true` のときだけ、`active_hours` の時間帯に実施中taskがない状態が `idle_seconds` 続くとfree timeを自動開始する。終了時刻は時間帯に含まない。`22:00-02:00` のような日跨ぎも指定できる。
+free timeは手動開始・自動開始のどちらでも`active_hours`内だけ累積し、時間帯の終了時に停止する。
+`auto_free_time.enabled = true` のときだけ、`active_hours`内で実施中taskがない状態が `idle_seconds` 続くとfree timeを自動開始する。
+終了時刻は時間帯に含まない。`22:00-02:00` のような日跨ぎも指定できる。
 
 保存場所は Windows の `AppData Local` 配下にまとめる。
 

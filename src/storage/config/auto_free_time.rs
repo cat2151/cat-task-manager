@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use chrono::NaiveTime;
+use chrono::{DateTime, Days, FixedOffset, NaiveTime, TimeZone};
 use serde::{de::Error as _, Deserialize, Deserializer};
 
 const DEFAULT_ACTIVE_HOURS: &str = "09:00-17:00";
@@ -16,6 +16,13 @@ pub struct AutoFreeTimeConfig {
 impl AutoFreeTimeConfig {
     pub fn is_active_at(&self, time: NaiveTime) -> bool {
         self.active_hours.contains(time)
+    }
+
+    pub(crate) fn active_end_at_or_before(
+        &self,
+        now: DateTime<FixedOffset>,
+    ) -> DateTime<FixedOffset> {
+        self.active_hours.end_at_or_before(now)
     }
 }
 
@@ -89,6 +96,20 @@ impl ActiveHours {
         } else {
             self.start <= time || time < self.end
         }
+    }
+
+    fn end_at_or_before(self, now: DateTime<FixedOffset>) -> DateTime<FixedOffset> {
+        let date = if now.time() >= self.end {
+            now.date_naive()
+        } else {
+            now.date_naive()
+                .checked_sub_days(Days::new(1))
+                .expect("previous date is representable")
+        };
+        now.offset()
+            .from_local_datetime(&date.and_time(self.end))
+            .single()
+            .expect("fixed offset has one local datetime")
     }
 }
 
@@ -201,6 +222,46 @@ active_hours = "22:00-02:00"
         assert!(config.is_active_at(parse_time("23:00").unwrap()));
         assert!(config.is_active_at(parse_time("01:00").unwrap()));
         assert!(!config.is_active_at(parse_time("12:00").unwrap()));
+    }
+
+    #[test]
+    fn active_end_is_most_recent_boundary() {
+        let config = config(
+            r#"
+enabled = true
+active_hours = "09:00-17:00"
+"#,
+        );
+
+        assert_eq!(
+            config.active_end_at_or_before(
+                DateTime::parse_from_rfc3339("2026-06-23T18:00:00+09:00").unwrap()
+            ),
+            DateTime::parse_from_rfc3339("2026-06-23T17:00:00+09:00").unwrap()
+        );
+        assert_eq!(
+            config.active_end_at_or_before(
+                DateTime::parse_from_rfc3339("2026-06-23T08:00:00+09:00").unwrap()
+            ),
+            DateTime::parse_from_rfc3339("2026-06-22T17:00:00+09:00").unwrap()
+        );
+    }
+
+    #[test]
+    fn cross_midnight_active_end_is_same_day() {
+        let config = config(
+            r#"
+enabled = true
+active_hours = "22:00-02:00"
+"#,
+        );
+
+        assert_eq!(
+            config.active_end_at_or_before(
+                DateTime::parse_from_rfc3339("2026-06-23T12:00:00+09:00").unwrap()
+            ),
+            DateTime::parse_from_rfc3339("2026-06-23T02:00:00+09:00").unwrap()
+        );
     }
 
     #[test]
