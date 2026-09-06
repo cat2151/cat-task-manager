@@ -15,6 +15,8 @@ use crate::{
     storage::{KeyBindingsConfig, MonokaiColorName, Task, UiConfig},
 };
 
+mod timing;
+
 fn task(name: &str, order: u32, source_line: u32) -> Task {
     Task {
         name: name.to_string(),
@@ -128,48 +130,6 @@ fn unfocused_draw_renders_whole_screen_as_dark_gray() {
 }
 
 #[test]
-fn all_task_lines_include_completed_tasks_with_work_duration() {
-    let mut app = App::new(
-        vec![task_list(
-            "0730",
-            vec![task("done", 1, 1), task("next", 2, 2)],
-        )],
-        NaiveDate::from_ymd_opt(2026, 5, 18).unwrap(),
-    );
-    app.tabs[0].tasks[0].state = TaskState::Done;
-    app.tabs[0].tasks[0].started_at = Some(timestamp("2026-05-18T09:00:00+09:00"));
-    app.tabs[0].tasks[0].completed_at = Some(timestamp("2026-05-18T10:05:00+09:00"));
-
-    let lines = all_task_lines(&app);
-
-    assert_eq!(lines.len(), 2);
-    assert!(line_text(&lines[0]).contains("完了"));
-    assert!(line_text(&lines[0]).contains("作業時間 1時間5分"));
-    assert!(line_text(&lines[1]).contains("未着手"));
-}
-
-#[test]
-fn one_line_task_line_does_not_show_completed_duration() {
-    let task = DailyTask {
-        name: "done".to_string(),
-        order: 1,
-        source_line: 1,
-        state: TaskState::Done,
-        started_at: Some(timestamp("2026-05-18T09:00:00+09:00")),
-        completed_at: Some(timestamp("2026-05-18T09:05:00+09:00")),
-        free_time_seconds: None,
-    };
-
-    let line = task_line(&task, None, false);
-
-    assert!(!line_text(&line).contains("作業時間"));
-    assert!(line
-        .spans
-        .iter()
-        .all(|span| !span.style.add_modifier.contains(Modifier::SLOW_BLINK)));
-}
-
-#[test]
 fn task_line_shows_deferred_state() {
     let task = DailyTask {
         name: "later".to_string(),
@@ -178,6 +138,7 @@ fn task_line_shows_deferred_state() {
         state: TaskState::Deferred,
         started_at: None,
         completed_at: None,
+        pauses: Vec::new(),
         free_time_seconds: None,
     };
 
@@ -195,6 +156,7 @@ fn task_line_shows_estimated_duration_instead_of_order() {
         state: TaskState::NotStarted,
         started_at: None,
         completed_at: None,
+        pauses: Vec::new(),
         free_time_seconds: None,
     };
 
@@ -224,6 +186,7 @@ fn free_time_task_line_shows_cumulative_seconds() {
         state: TaskState::Done,
         started_at: None,
         completed_at: None,
+        pauses: Vec::new(),
         free_time_seconds: Some(65),
     };
 

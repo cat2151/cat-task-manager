@@ -7,7 +7,7 @@ use chrono::{DateTime, Local, NaiveDate};
 use serde::Serialize;
 
 use crate::{
-    app::{DailyTask, TaskState, FREE_TIME_TASK_NAME},
+    app::{validate_task_timing, DailyTask, TaskPause, TaskState, FREE_TIME_TASK_NAME},
     clock,
 };
 
@@ -46,6 +46,7 @@ pub struct TaskStatus {
     pub state: TaskState,
     pub started_at: Option<DateTime<Local>>,
     pub completed_at: Option<DateTime<Local>>,
+    pub pauses: Vec<TaskPause>,
     pub free_time_seconds: Option<u64>,
 }
 
@@ -57,8 +58,17 @@ struct LineStatusRecord<'a> {
     started_at: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     completed_at: Option<&'a str>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pauses: Vec<LinePauseRecord>,
     #[serde(skip_serializing_if = "Option::is_none")]
     free_time_seconds: Option<u64>,
+}
+
+#[derive(Debug, Serialize)]
+struct LinePauseRecord {
+    paused_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    resumed_at: Option<String>,
 }
 
 pub(super) fn ensure_tasks_dir(path: &Path) -> Result<(), String> {
@@ -269,11 +279,23 @@ fn render_task_file_with_line_status(
         } else {
             task.completed_at.as_ref().map(clock::format_rfc3339_jst)
         };
+        let pauses = if task.is_free_time() {
+            Vec::new()
+        } else {
+            task.pauses
+                .iter()
+                .map(|pause| LinePauseRecord {
+                    paused_at: clock::format_rfc3339_jst(&pause.paused_at),
+                    resumed_at: pause.resumed_at.as_ref().map(clock::format_rfc3339_jst),
+                })
+                .collect()
+        };
         let status = LineStatusRecord {
             date,
             state: task.state.status_value(),
             started_at: started_at.as_deref(),
             completed_at: completed_at.as_deref(),
+            pauses,
             free_time_seconds: task.free_time_seconds,
         };
         let json = serde_json::to_string(&status).map_err(|err| {
@@ -332,19 +354,19 @@ fn render_task_text_for_state(task_text: &str, state: &TaskState) -> String {
 
 fn validate_completion_times(task: &DailyTask) -> Result<(), String> {
     if task.is_free_time() {
+        if !task.pauses.is_empty() {
+            return Err("free time taskにはpausesを書けません".to_string());
+        }
         return Ok(());
     }
 
-    if matches!(task.state, TaskState::Done)
-        && (task.started_at.is_none() || task.completed_at.is_none())
-    {
-        return Err(format!(
-            "完了タスクに着手時刻または完了時刻がありません: {}",
-            task.name
-        ));
-    }
-
-    Ok(())
+    validate_task_timing(
+        &task.state,
+        task.started_at,
+        task.completed_at,
+        &task.pauses,
+    )
+    .map_err(|err| format!("taskの時刻が不正です: {} ({err})", task.name))
 }
 
 fn validate_tasks(tasks: &[Task]) -> Result<(), String> {

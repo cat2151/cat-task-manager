@@ -5,6 +5,8 @@ use chrono::{DateTime, Local};
 use crossterm::event::KeyModifiers;
 use std::path::PathBuf;
 
+mod free_time;
+mod timing;
 mod view;
 
 fn task(name: &str, order: u32, source_line: u32) -> Task {
@@ -55,64 +57,6 @@ fn advances_tasks_in_order() {
 }
 
 #[test]
-fn hold_toggles_only_in_progress_tasks() {
-    let mut app = app();
-    app.select_next_tab();
-    app.toggle_hold_selected();
-    assert_eq!(app.tabs[0].tasks[0].state, TaskState::NotStarted);
-    app.advance_selected();
-    app.toggle_hold_selected();
-    assert_eq!(app.tabs[0].tasks[0].state, TaskState::OnHold);
-    assert!(app.tabs[0].tasks[0].started_at.is_some());
-    app.toggle_hold_selected();
-    assert_eq!(app.tabs[0].tasks[0].state, TaskState::InProgress);
-}
-
-#[test]
-fn on_hold_task_still_blocks_next_task() {
-    let mut app = app();
-
-    app.select_next_tab();
-    app.advance_selected();
-    app.toggle_hold_selected();
-    app.select_next();
-    app.advance_selected();
-
-    assert_eq!(app.tabs[0].tasks[1].state, TaskState::NotStarted);
-    assert_eq!(app.message(), "前のタスクが完了していません");
-}
-
-#[test]
-fn deferred_task_does_not_block_next_task() {
-    let mut app = app();
-
-    app.defer_selected();
-    assert_eq!(app.tabs[0].tasks[0].state, TaskState::Deferred);
-    assert!(app.tabs[0].tasks[0].started_at.is_none());
-    assert_eq!(app.selected_visible_task().unwrap().1.name, "b");
-
-    app.advance_selected();
-
-    assert_eq!(app.tabs[0].tasks[1].state, TaskState::InProgress);
-}
-
-#[test]
-fn advance_resumes_deferred_task() {
-    let mut app = app();
-
-    app.advance_selected();
-    app.defer_selected();
-    assert_eq!(app.tabs[0].tasks[0].state, TaskState::Deferred);
-
-    app.toggle_view_mode();
-    app.advance_selected();
-
-    assert_eq!(app.tabs[0].tasks[0].state, TaskState::InProgress);
-    assert!(app.tabs[0].tasks[0].started_at.is_some());
-    assert!(app.tabs[0].tasks[0].completed_at.is_none());
-}
-
-#[test]
 fn replace_tabs_resets_state_to_tasks_file_content() {
     let mut app = app();
     app.advance_selected();
@@ -143,12 +87,14 @@ fn apply_statuses_matches_by_tasks_file_order() {
                 state: TaskState::Done,
                 started_at: Some(timestamp()),
                 completed_at: Some(timestamp()),
+                pauses: Vec::new(),
                 free_time_seconds: None,
             },
             TaskStatus {
                 state: TaskState::InProgress,
-                started_at: None,
+                started_at: Some(timestamp()),
                 completed_at: None,
+                pauses: Vec::new(),
                 free_time_seconds: None,
             },
         ],
@@ -174,6 +120,7 @@ fn extra_tasks_without_status_stay_not_started() {
             state: TaskState::Done,
             started_at: Some(timestamp()),
             completed_at: Some(timestamp()),
+            pauses: Vec::new(),
             free_time_seconds: None,
         }],
     );
@@ -363,115 +310,6 @@ fn all_tab_one_line_skips_rest_of_held_tab_and_starts_other_tab_task() {
 
     assert_eq!(app.tabs[0].tasks[1].state, TaskState::NotStarted);
     assert_eq!(app.tabs[1].tasks[0].state, TaskState::InProgress);
-}
-
-#[test]
-fn free_time_key_holds_in_progress_tasks_and_selects_free_time_tab() {
-    let mut app = App::new(
-        vec![
-            task_list("0730", vec![task("a", 1, 1)]),
-            task_list(FREE_TIME_TAB_LABEL, vec![task(FREE_TIME_TASK_NAME, 1, 1)]),
-        ],
-        NaiveDate::from_ymd_opt(2026, 5, 18).unwrap(),
-    );
-    let keybindings = KeyBindings::from_config(KeyBindingsConfig::default()).unwrap();
-
-    app.advance_selected();
-    app.handle_key(
-        KeyEvent::new(KeyCode::Char('f'), KeyModifiers::empty()),
-        &keybindings,
-    );
-
-    assert!(app.free_time_active());
-    assert_eq!(app.tabs[0].tasks[0].state, TaskState::OnHold);
-    assert_eq!(app.current_tab_label(), FREE_TIME_TAB_LABEL);
-    assert_eq!(
-        app.selected_visible_task().unwrap().1.name,
-        FREE_TIME_TASK_NAME
-    );
-}
-
-#[test]
-fn free_time_key_resumes_first_on_hold_task_and_selects_its_tab() {
-    let mut app = App::new(
-        vec![
-            task_list("0730", vec![task("a", 1, 1)]),
-            task_list("0800", vec![task("b", 1, 1)]),
-            task_list(FREE_TIME_TAB_LABEL, vec![task(FREE_TIME_TASK_NAME, 1, 1)]),
-        ],
-        NaiveDate::from_ymd_opt(2026, 5, 18).unwrap(),
-    );
-    let keybindings = KeyBindings::from_config(KeyBindingsConfig::default()).unwrap();
-    app.tabs[0].tasks[0].state = TaskState::InProgress;
-    app.tabs[1].tasks[0].state = TaskState::InProgress;
-
-    app.handle_key(
-        KeyEvent::new(KeyCode::Char('f'), KeyModifiers::empty()),
-        &keybindings,
-    );
-    app.handle_key(
-        KeyEvent::new(KeyCode::Char('f'), KeyModifiers::empty()),
-        &keybindings,
-    );
-
-    assert!(!app.free_time_active());
-    assert_eq!(app.tabs[0].tasks[0].state, TaskState::InProgress);
-    assert_eq!(app.tabs[1].tasks[0].state, TaskState::OnHold);
-    assert_eq!(app.current_tab_label(), "0730");
-}
-
-#[test]
-fn starting_a_task_auto_stops_free_time() {
-    let mut app = App::new(
-        vec![
-            task_list("0730", vec![task("a", 1, 1)]),
-            task_list(FREE_TIME_TAB_LABEL, vec![task(FREE_TIME_TASK_NAME, 1, 1)]),
-        ],
-        NaiveDate::from_ymd_opt(2026, 5, 18).unwrap(),
-    );
-    let keybindings = KeyBindings::from_config(KeyBindingsConfig::default()).unwrap();
-
-    app.handle_key(
-        KeyEvent::new(KeyCode::Char('f'), KeyModifiers::empty()),
-        &keybindings,
-    );
-    assert!(app.free_time_active());
-
-    app.select_previous_tab();
-    app.advance_selected();
-
-    assert!(!app.free_time_active());
-    assert_eq!(app.tabs[0].tasks[0].state, TaskState::InProgress);
-    assert!(app.message().contains("free timeを停止しました"));
-}
-
-#[test]
-fn releasing_hold_auto_stops_free_time() {
-    let mut app = App::new(
-        vec![
-            task_list("0730", vec![task("a", 1, 1)]),
-            task_list(FREE_TIME_TAB_LABEL, vec![task(FREE_TIME_TASK_NAME, 1, 1)]),
-        ],
-        NaiveDate::from_ymd_opt(2026, 5, 18).unwrap(),
-    );
-    let keybindings = KeyBindings::from_config(KeyBindingsConfig::default()).unwrap();
-
-    // task aを実施中にしてからfree timeを開始すると、aは保留になる。
-    app.advance_selected();
-    app.handle_key(
-        KeyEvent::new(KeyCode::Char('f'), KeyModifiers::empty()),
-        &keybindings,
-    );
-    assert!(app.free_time_active());
-    assert_eq!(app.tabs[0].tasks[0].state, TaskState::OnHold);
-
-    // 保留を解除すると矛盾するため、free timeは自動停止する。
-    app.select_previous_tab();
-    app.toggle_hold_selected();
-
-    assert!(!app.free_time_active());
-    assert_eq!(app.tabs[0].tasks[0].state, TaskState::InProgress);
-    assert!(app.message().contains("free timeを停止しました"));
 }
 
 #[test]

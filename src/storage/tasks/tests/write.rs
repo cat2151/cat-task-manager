@@ -19,7 +19,7 @@ fn write_task_file_status_replaces_line_end_json() {
     let raw = fs::read_to_string(&path).unwrap();
     assert_eq!(
         raw,
-        "- [x] a {\"date\":\"2026-05-18\",\"state\":\"done\",\"started_at\":\"2026-05-18T09:12:00+09:00\",\"completed_at\":\"2026-05-18T09:12:00+09:00\"}\n\n# comment\n- [ ] b {\"date\":\"2026-05-18\",\"state\":\"in_progress\"}\n"
+        "- [x] a {\"date\":\"2026-05-18\",\"state\":\"done\",\"started_at\":\"2026-05-18T09:12:00+09:00\",\"completed_at\":\"2026-05-18T09:12:00+09:00\"}\n\n# comment\n- [ ] b {\"date\":\"2026-05-18\",\"state\":\"in_progress\",\"started_at\":\"2026-05-18T09:12:00+09:00\"}\n"
     );
     assert!(!raw.contains("\"states\""));
     assert!(!raw.contains("\"name\""));
@@ -44,6 +44,7 @@ fn write_task_file_status_saves_gmt_timestamps_as_jst() {
         state: TaskState::Done,
         started_at: Some(time),
         completed_at: Some(time),
+        pauses: Vec::new(),
         free_time_seconds: None,
     }];
 
@@ -69,6 +70,7 @@ fn write_task_file_status_saves_free_time_seconds_without_timestamps() {
         state: TaskState::Done,
         started_at: None,
         completed_at: None,
+        pauses: Vec::new(),
         free_time_seconds: Some(65),
     }];
 

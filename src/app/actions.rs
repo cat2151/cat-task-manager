@@ -45,6 +45,7 @@ impl App {
                     task.state = TaskState::InProgress;
                     task.started_at = Some(now);
                     task.completed_at = None;
+                    task.pauses.clear();
                     let name = task.name.clone();
                     let stopped = self.auto_stop_free_time();
                     self.message =
@@ -67,9 +68,11 @@ impl App {
             TaskState::Deferred => {
                 let now = Local::now();
                 let task = self.task_at_mut(location);
-                task.state = TaskState::InProgress;
                 if task.started_at.is_none() {
                     task.started_at = Some(now);
+                    task.state = TaskState::InProgress;
+                } else {
+                    task.resume_at(now);
                 }
                 task.completed_at = None;
                 let name = task.name.clone();
@@ -84,6 +87,10 @@ impl App {
     }
 
     pub(super) fn toggle_hold_selected(&mut self) {
+        self.toggle_hold_selected_at(Local::now());
+    }
+
+    pub(super) fn toggle_hold_selected_at(&mut self, now: chrono::DateTime<Local>) {
         let Some((_, location)) = self.selected_task_location() else {
             self.message = self.empty_visible_tasks_message().to_string();
             return;
@@ -92,11 +99,11 @@ impl App {
         let task = self.task_at_mut(location);
         match task.state {
             TaskState::InProgress => {
-                task.state = TaskState::OnHold;
+                task.pause_at(TaskState::OnHold, now);
                 self.message = format!("保留しました: {}", task.name);
             }
             TaskState::OnHold => {
-                task.state = TaskState::InProgress;
+                task.resume_at(now);
                 let name = task.name.clone();
                 let stopped = self.auto_stop_free_time();
                 self.message = format!("再開しました: {name}{}", free_time_stopped_suffix(stopped));
@@ -108,6 +115,10 @@ impl App {
     }
 
     pub(super) fn defer_selected(&mut self) {
+        self.defer_selected_at(Local::now());
+    }
+
+    pub(super) fn defer_selected_at(&mut self, now: chrono::DateTime<Local>) {
         let Some((_, location)) = self.selected_task_location() else {
             self.message = self.empty_visible_tasks_message().to_string();
             return;
@@ -115,19 +126,25 @@ impl App {
 
         let task = self.task_at_mut(location);
         match task.state {
-            TaskState::NotStarted | TaskState::InProgress => {
+            TaskState::NotStarted => {
                 task.state = TaskState::Deferred;
+                task.completed_at = None;
+                self.message = format!("後回しにしました: {}", task.name);
+                self.clamp_selection();
+            }
+            TaskState::InProgress => {
+                task.pause_at(TaskState::Deferred, now);
                 task.completed_at = None;
                 self.message = format!("後回しにしました: {}", task.name);
                 self.clamp_selection();
             }
             TaskState::Deferred => {
                 let resumed = task.started_at.is_some();
-                task.state = if resumed {
-                    TaskState::InProgress
+                if resumed {
+                    task.resume_at(now);
                 } else {
-                    TaskState::NotStarted
-                };
+                    task.state = TaskState::NotStarted;
+                }
                 let name = task.name.clone();
                 let stopped = resumed && self.auto_stop_free_time();
                 self.message = format!(

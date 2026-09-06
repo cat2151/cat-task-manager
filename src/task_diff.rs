@@ -18,5 +18,6 @@ fn tasks_differ(before: &[DailyTask], after: &[DailyTask]) -> bool {
                 || before.state != after.state
                 || before.started_at != after.started_at
                 || before.completed_at != after.completed_at
+                || before.pauses != after.pauses
         })
 }

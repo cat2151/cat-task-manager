@@ -13,8 +13,10 @@ mod blink;
 mod free_time;
 mod model;
 mod stats;
-pub use model::{DailyTask, TaskList, TaskState, TaskTab, ViewMode};
+mod timing;
+pub use model::{DailyTask, TaskList, TaskPause, TaskState, TaskTab, ViewMode};
 pub use stats::{AppScreen, HistoryStatsState};
+pub(crate) use timing::{completed_work_duration, validate_task_timing};
 
 const ALL_TAB_LABEL: &str = "all";
 pub const FREE_TIME_TAB_LABEL: &str = "free_time";
@@ -52,7 +54,10 @@ pub struct App {
 impl App {
     pub fn new(task_lists: Vec<TaskList>, current_date: NaiveDate) -> Self {
         Self {
-            tabs: task_lists.into_iter().map(task_tab_from_list).collect(),
+            tabs: task_lists
+                .into_iter()
+                .map(model::task_tab_from_list)
+                .collect(),
             current_date,
             screen: AppScreen::Tasks,
             history_stats: HistoryStatsState::Idle,
@@ -220,7 +225,10 @@ impl App {
 
     pub fn replace_tabs(&mut self, task_lists: Vec<TaskList>) {
         let selected_path = self.current_tab_path().map(Path::to_path_buf);
-        self.tabs = task_lists.into_iter().map(task_tab_from_list).collect();
+        self.tabs = task_lists
+            .into_iter()
+            .map(model::task_tab_from_list)
+            .collect();
         self.selected_tab = selected_path
             .and_then(|selected_path| {
                 self.tabs
@@ -244,6 +252,7 @@ impl App {
             task.state = status.state.clone();
             task.started_at = status.started_at;
             task.completed_at = status.completed_at;
+            task.pauses = status.pauses.clone();
             task.free_time_seconds = status.free_time_seconds;
         }
         self.clamp_selection();
@@ -293,12 +302,14 @@ impl App {
                     task.state = TaskState::Done;
                     task.started_at = None;
                     task.completed_at = None;
+                    task.pauses.clear();
                     task.free_time_seconds = Some(0);
                     continue;
                 }
                 task.state = TaskState::NotStarted;
                 task.started_at = None;
                 task.completed_at = None;
+                task.pauses.clear();
             }
         }
         self.current_date = new_date;
@@ -412,34 +423,6 @@ impl App {
 
     fn task_at_mut(&mut self, location: TaskLocation) -> &mut DailyTask {
         &mut self.tabs[location.tab_index].tasks[location.task_index]
-    }
-}
-
-fn task_tab_from_list(task_list: TaskList) -> TaskTab {
-    let is_free_time_tab = task_list.label == FREE_TIME_TAB_LABEL;
-    TaskTab {
-        label: task_list.label,
-        path: task_list.path,
-        tasks: task_list
-            .tasks
-            .into_iter()
-            .map(|task| {
-                let is_free_time_task = is_free_time_tab && task.name == FREE_TIME_TASK_NAME;
-                DailyTask {
-                    name: task.name,
-                    order: task.order,
-                    source_line: task.source_line,
-                    state: if is_free_time_task {
-                        TaskState::Done
-                    } else {
-                        TaskState::NotStarted
-                    },
-                    started_at: None,
-                    completed_at: None,
-                    free_time_seconds: is_free_time_task.then_some(0),
-                }
-            })
-            .collect(),
     }
 }
 

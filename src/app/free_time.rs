@@ -113,7 +113,7 @@ impl App {
             return false;
         }
 
-        let held_count = self.hold_in_progress_tasks_except_free_time();
+        let held_count = self.hold_in_progress_tasks_except_free_time(now);
         self.free_time_active = true;
         self.free_time_started_at = Some(now);
 
@@ -133,7 +133,7 @@ impl App {
         self.free_time_started_at = None;
         self.prepare_free_time_task();
 
-        if let Some(task_name) = self.resume_first_on_hold_task() {
+        if let Some(task_name) = self.resume_first_on_hold_task(now) {
             self.message = format!("free timeを終了して再開しました: {task_name}");
         } else {
             self.message = "free timeを終了しました。再開する保留taskはありません".to_string();
@@ -154,7 +154,7 @@ impl App {
         self.free_time_started_at = None;
         self.prepare_free_time_task();
 
-        if let Some(task_name) = self.resume_first_on_hold_task() {
+        if let Some(task_name) = self.resume_first_on_hold_task(ended_at.with_timezone(&Local)) {
             self.message =
                 format!("active_hours終了のためfree timeを終了して再開しました: {task_name}");
         } else {
@@ -169,11 +169,12 @@ impl App {
             task.state = TaskState::Done;
             task.started_at = None;
             task.completed_at = None;
+            task.pauses.clear();
             task.free_time_seconds.get_or_insert(0);
         }
     }
 
-    fn hold_in_progress_tasks_except_free_time(&mut self) -> usize {
+    fn hold_in_progress_tasks_except_free_time(&mut self, now: DateTime<Local>) -> usize {
         let mut held_count = 0;
 
         for tab in &mut self.tabs {
@@ -185,7 +186,7 @@ impl App {
                 if task.state != TaskState::InProgress {
                     continue;
                 }
-                task.state = TaskState::OnHold;
+                task.pause_at(TaskState::OnHold, now);
                 held_count += 1;
             }
         }
@@ -193,11 +194,11 @@ impl App {
         held_count
     }
 
-    fn resume_first_on_hold_task(&mut self) -> Option<String> {
+    fn resume_first_on_hold_task(&mut self, now: DateTime<Local>) -> Option<String> {
         let location = self.first_on_hold_task_location()?;
         let task_name = {
             let task = self.task_at_mut(location);
-            task.state = TaskState::InProgress;
+            task.resume_at(now);
             task.name.clone()
         };
         self.select_task_location(location);

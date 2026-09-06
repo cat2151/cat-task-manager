@@ -1,7 +1,7 @@
 use chrono::{DateTime, Local, NaiveDate};
 use serde::Deserialize;
 
-use crate::app::{TaskState, FREE_TIME_TASK_NAME};
+use crate::app::{validate_task_timing, TaskPause, TaskState, FREE_TIME_TASK_NAME};
 
 use super::{Task, TaskFileStatus, TaskStatus};
 
@@ -48,7 +48,16 @@ struct RawLineStatus {
     state: String,
     started_at: Option<String>,
     completed_at: Option<String>,
+    #[serde(default)]
+    pauses: Vec<RawPause>,
     free_time_seconds: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawPause {
+    paused_at: String,
+    resumed_at: Option<String>,
 }
 
 pub(super) fn parse_task_file_content(
@@ -193,6 +202,7 @@ fn checkbox_status_for_not_started(name: &str) -> TaskStatus {
         state: TaskState::NotStarted,
         started_at: None,
         completed_at: None,
+        pauses: Vec::new(),
         free_time_seconds: None,
     }
 }
@@ -206,6 +216,7 @@ fn checkbox_status_for_done(name: &str, detected_at: DateTime<Local>) -> TaskSta
         state: TaskState::Done,
         started_at: Some(detected_at),
         completed_at: Some(detected_at),
+        pauses: Vec::new(),
         free_time_seconds: None,
     }
 }
@@ -215,6 +226,7 @@ fn free_time_task_status(seconds: u64) -> TaskStatus {
         state: TaskState::Done,
         started_at: None,
         completed_at: None,
+        pauses: Vec::new(),
         free_time_seconds: Some(seconds),
     }
 }
@@ -241,9 +253,16 @@ fn parse_line_status(raw_status: RawLineStatus) -> Result<LineStatus, String> {
         )
     })?;
 
+    let pauses = parse_pauses(raw_status.pauses)?;
+
     if let Some(seconds) = raw_status.free_time_seconds {
-        if raw_status.started_at.is_some() || raw_status.completed_at.is_some() {
-            return Err("free time 行末JSONには started_at/completed_at を書けません".to_string());
+        if raw_status.started_at.is_some()
+            || raw_status.completed_at.is_some()
+            || !pauses.is_empty()
+        {
+            return Err(
+                "free time 行末JSONには started_at/completed_at/pauses を書けません".to_string(),
+            );
         }
 
         return Ok(LineStatus {
@@ -264,15 +283,38 @@ fn parse_line_status(raw_status: RawLineStatus) -> Result<LineStatus, String> {
     };
     let started_at = parse_optional_time("started_at", raw_status.started_at)?.or(completed_at);
 
-    Ok(LineStatus {
-        date,
-        task_status: TaskStatus {
-            state: task_state,
-            started_at,
-            completed_at,
-            free_time_seconds: None,
-        },
-    })
+    let task_status = TaskStatus {
+        state: task_state,
+        started_at,
+        completed_at,
+        pauses,
+        free_time_seconds: None,
+    };
+    validate_task_timing(
+        &task_status.state,
+        task_status.started_at,
+        task_status.completed_at,
+        &task_status.pauses,
+    )
+    .map_err(|err| format!("task file 行末JSONの時刻が不正です: {err}"))?;
+
+    Ok(LineStatus { date, task_status })
+}
+
+fn parse_pauses(raw_pauses: Vec<RawPause>) -> Result<Vec<TaskPause>, String> {
+    raw_pauses
+        .into_iter()
+        .map(|pause| {
+            Ok(TaskPause {
+                paused_at: parse_time("paused_at", &pause.paused_at)?,
+                resumed_at: pause
+                    .resumed_at
+                    .as_deref()
+                    .map(|value| parse_time("resumed_at", value))
+                    .transpose()?,
+            })
+        })
+        .collect()
 }
 
 fn parse_optional_time(
@@ -289,6 +331,14 @@ fn parse_optional_time(
                 })
         })
         .transpose()
+}
+
+fn parse_time(field_name: &str, value: &str) -> Result<DateTime<Local>, String> {
+    DateTime::parse_from_rfc3339(value)
+        .map(|value| value.with_timezone(&Local))
+        .map_err(|err| {
+            format!("task file 行末JSONの{field_name}を読めませんでした: '{value}' ({err})")
+        })
 }
 
 fn build_task_file_status(
@@ -312,9 +362,9 @@ fn build_task_file_status(
                     states.push(resolve_task_status(
                         Some(line_status.task_status),
                         checkbox_status,
-                    ));
+                    )?);
                 }
-                None => states.push(resolve_task_status(None, checkbox_status)),
+                None => states.push(resolve_task_status(None, checkbox_status)?),
             }
         }
 
@@ -336,29 +386,42 @@ fn build_task_file_status(
     Ok(None)
 }
 
-fn resolve_task_status(line_status: Option<TaskStatus>, checkbox_status: TaskStatus) -> TaskStatus {
+fn resolve_task_status(
+    line_status: Option<TaskStatus>,
+    checkbox_status: TaskStatus,
+) -> Result<TaskStatus, String> {
     let Some(line_status) = line_status else {
-        return checkbox_status;
+        return Ok(checkbox_status);
     };
 
     if line_status.free_time_seconds.is_some() {
-        return line_status;
+        return Ok(line_status);
     }
 
-    match (&checkbox_status.state, &line_status.state) {
+    let resolved = match (&checkbox_status.state, &line_status.state) {
         (TaskState::Done, TaskState::Done) => line_status,
         (TaskState::Done, _) => TaskStatus {
             state: TaskState::Done,
             started_at: line_status.started_at.or(checkbox_status.started_at),
             completed_at: line_status.completed_at.or(checkbox_status.completed_at),
+            pauses: line_status.pauses,
             free_time_seconds: None,
         },
         (_, TaskState::Done) => TaskStatus {
             state: TaskState::NotStarted,
             started_at: None,
             completed_at: None,
+            pauses: Vec::new(),
             free_time_seconds: None,
         },
         _ => line_status,
-    }
+    };
+    validate_task_timing(
+        &resolved.state,
+        resolved.started_at,
+        resolved.completed_at,
+        &resolved.pauses,
+    )
+    .map_err(|err| format!("task file 行末JSONの時刻が不正です: {err}"))?;
+    Ok(resolved)
 }

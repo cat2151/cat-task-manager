@@ -1,9 +1,12 @@
 use std::collections::HashMap;
 
-use chrono::{DateTime, Duration, Local};
+use chrono::{DateTime, Local};
 use serde::{Deserialize, Serialize};
 
-use crate::storage::{TaskFile, TaskStatus};
+use crate::{
+    app::completed_work_duration,
+    storage::{TaskFile, TaskStatus},
+};
 
 const MIN_OUTLIER_SAMPLE_COUNT: usize = 4;
 const HISTOGRAM_BIN_WIDTH_SECONDS: i64 = 5 * 60;
@@ -18,6 +21,7 @@ pub(crate) struct TaskDurationCandidate {
     task_name: String,
     started_at: DateTime<Local>,
     completed_at: DateTime<Local>,
+    elapsed_seconds: i64,
 }
 
 #[derive(Debug, Default)]
@@ -37,7 +41,7 @@ impl TaskDurationCandidate {
     }
 
     fn elapsed_seconds(&self) -> i64 {
-        (self.completed_at - self.started_at).num_seconds()
+        self.elapsed_seconds
     }
 }
 
@@ -80,13 +84,12 @@ fn candidate_from_task_status(
     task_name: &str,
     status: &TaskStatus,
 ) -> Option<TaskDurationCandidate> {
-    let started_at = status.started_at?;
-    let completed_at = status.completed_at?;
-    let duration = completed_at - started_at;
-    (duration >= Duration::zero()).then(|| TaskDurationCandidate {
+    let duration = completed_work_duration(status.started_at, status.completed_at, &status.pauses)?;
+    Some(TaskDurationCandidate {
         task_name: task_name.to_string(),
-        started_at,
-        completed_at,
+        started_at: status.started_at?,
+        completed_at: status.completed_at?,
+        elapsed_seconds: duration.num_seconds(),
     })
 }
 
@@ -205,6 +208,9 @@ mod tests {
             completed_at: DateTime::parse_from_rfc3339(completed_at)
                 .unwrap()
                 .with_timezone(&Local),
+            elapsed_seconds: (DateTime::parse_from_rfc3339(completed_at).unwrap()
+                - DateTime::parse_from_rfc3339(started_at).unwrap())
+            .num_seconds(),
         }
     }
 
@@ -220,6 +226,18 @@ mod tests {
 
         assert_eq!(summary.for_task("a").unwrap().elapsed_seconds, 5 * 60);
         assert_eq!(summary.for_task("b").unwrap().elapsed_seconds, 30 * 60);
+    }
+
+    #[test]
+    fn candidates_subtract_pauses_from_completed_task_elapsed_times() {
+        let file = task_file(
+            "- [x] a {\"date\":\"2026-05-18\",\"state\":\"done\",\"started_at\":\"2026-05-18T09:00:00+09:00\",\"completed_at\":\"2026-05-18T10:00:00+09:00\",\"pauses\":[{\"paused_at\":\"2026-05-18T09:15:00+09:00\",\"resumed_at\":\"2026-05-18T09:30:00+09:00\"}]}\n",
+        );
+
+        let candidates = candidates_from_task_file(&file);
+        let summary = summarize(&candidates);
+
+        assert_eq!(summary.for_task("a").unwrap().elapsed_seconds, 45 * 60);
     }
 
     #[test]

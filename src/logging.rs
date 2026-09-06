@@ -7,7 +7,7 @@ use std::{
 use chrono::{DateTime, Local};
 
 use crate::{
-    app::{DailyTask, TaskState, TaskTab},
+    app::{DailyTask, TaskPause, TaskState, TaskTab},
     clock,
     storage::AppPaths,
 };
@@ -29,6 +29,7 @@ pub struct TaskSnapshot {
     state: TaskState,
     started_at: Option<DateTime<Local>>,
     completed_at: Option<DateTime<Local>>,
+    pauses: Vec<TaskPause>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -243,6 +244,7 @@ pub fn task_snapshots(tabs: &[TaskTab]) -> Vec<TaskSnapshot> {
                 state: task.state.clone(),
                 started_at: task.started_at,
                 completed_at: task.completed_at,
+                pauses: task.pauses.clone(),
             })
         })
         .collect()
@@ -254,11 +256,13 @@ fn task_changed(before: Option<&TaskSnapshot>, after: &DailyTask) -> bool {
             before.state != after.state
                 || before.started_at != after.started_at
                 || before.completed_at != after.completed_at
+                || before.pauses != after.pauses
         }
         None => {
             after.state != TaskState::NotStarted
                 || after.started_at.is_some()
                 || after.completed_at.is_some()
+                || !after.pauses.is_empty()
         }
     }
 }

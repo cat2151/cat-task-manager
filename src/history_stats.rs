@@ -19,7 +19,7 @@ use crate::{
 mod typical;
 pub use typical::TypicalTaskDuration;
 
-const HISTORY_STATS_CACHE_VERSION: u32 = 5;
+const HISTORY_STATS_CACHE_VERSION: u32 = 6;
 const HISTORY_STATS_TIMEOUT: StdDuration = StdDuration::from_secs(60);
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

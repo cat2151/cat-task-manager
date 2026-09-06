@@ -1,4 +1,3 @@
-use chrono::Duration;
 use ratatui::{
     layout::Rect,
     style::{Color, Style},
@@ -8,7 +7,7 @@ use ratatui::{
 };
 
 use crate::{
-    app::{App, DailyTask, TaskState},
+    app::{completed_work_duration, App, DailyTask, TaskState},
     storage::UiConfig,
 };
 
@@ -190,7 +189,7 @@ fn task_line_with_style(
     }
 
     if show_completed_duration {
-        if let Some(duration) = completed_work_duration(task) {
+        if let Some(duration) = task_completed_work_duration(task) {
             spans.push(Span::styled("  ", base_style()));
             spans.push(Span::styled(
                 format!("作業時間 {}", format_work_duration(duration)),
@@ -351,16 +350,15 @@ fn default_estimate_style() -> Style {
     emphasized_style(MONOKAI_GREEN)
 }
 
-fn completed_work_duration(task: &DailyTask) -> Option<Duration> {
+fn task_completed_work_duration(task: &DailyTask) -> Option<chrono::Duration> {
     if task.state != TaskState::Done {
         return None;
     }
 
-    let duration = task.completed_at? - task.started_at?;
-    (duration >= Duration::zero()).then_some(duration)
+    completed_work_duration(task.started_at, task.completed_at, &task.pauses)
 }
 
-fn format_work_duration(duration: Duration) -> String {
+fn format_work_duration(duration: chrono::Duration) -> String {
     format_elapsed_seconds(duration.num_seconds())
 }
 
