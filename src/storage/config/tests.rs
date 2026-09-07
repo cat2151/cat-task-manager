@@ -182,6 +182,7 @@ fn default_config_is_config_only() {
     assert_eq!(file.editors, default_editors());
     assert!(!file.startup_git.auto_commit_and_push);
     assert!(!file.auto_free_time.enabled);
+    assert!(file.external_event.interface_file().is_none());
     assert_eq!(file.auto_free_time.idle_seconds, 60);
     assert!(file
         .auto_free_time
@@ -197,6 +198,36 @@ fn default_config_is_config_only() {
     assert_eq!(file.keybindings.get("right"), Some("next_tab"));
     assert_eq!(file.keybindings.get("s"), Some("stats"));
     assert_eq!(file.keybindings.get("?"), Some("help"));
+}
+
+#[test]
+fn external_event_interface_file_is_resolved_from_config_directory() {
+    let path = temp_config_path("external-event-path");
+    fs::write(
+        &path,
+        "[external_event]\ninterface_file = \"events/latest.toml\"\n",
+    )
+    .unwrap();
+
+    let config = load_config_file(&path).unwrap();
+
+    let expected = path.parent().unwrap().join("events/latest.toml");
+    assert_eq!(
+        config.external_event.interface_file(),
+        Some(expected.as_path())
+    );
+    fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn empty_external_event_interface_file_is_rejected() {
+    let path = temp_config_path("empty-external-event-path");
+    fs::write(&path, "[external_event]\ninterface_file = \"\"\n").unwrap();
+
+    let error = load_config_file(&path).unwrap_err();
+
+    assert!(error.contains("external_event.interface_file"));
+    fs::remove_file(path).unwrap();
 }
 
 #[test]

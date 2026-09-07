@@ -7,7 +7,8 @@ mod paths;
 mod tasks;
 
 pub use config::{
-    load_config_file, AutoFreeTimeConfig, KeyBindingsConfig, MonokaiColorName, UiConfig,
+    load_config_file, AutoFreeTimeConfig, ExternalEventConfig, KeyBindingsConfig, MonokaiColorName,
+    UiConfig,
 };
 pub use paths::{app_paths, ensure_app_storage, AppPaths};
 pub use tasks::{

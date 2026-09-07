@@ -29,14 +29,11 @@ pub fn reflect_task_file_status(
     }
 }
 
-pub fn persist_tasks(app: &mut App) {
+pub fn persist_tasks(app: &mut App) -> Result<(), String> {
     app.sync_free_time_elapsed();
-    let result = app.tabs().iter().try_for_each(|tab| {
+    app.tabs().iter().try_for_each(|tab| {
         storage::write_task_file_status(&tab.path, app.current_date, &tab.tasks)
-    });
-    if let Err(err) = result {
-        app.set_message(err);
-    }
+    })
 }
 
 pub fn task_lists_from_files(task_files: &[storage::TaskFile]) -> Vec<TaskList> {

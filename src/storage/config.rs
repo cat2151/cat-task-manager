@@ -1,4 +1,8 @@
-use std::{collections::HashSet, fs, path::Path};
+use std::{
+    collections::HashSet,
+    fs,
+    path::{Path, PathBuf},
+};
 
 use serde::{de::Error as _, Deserialize, Deserializer};
 
@@ -37,6 +41,8 @@ auto_commit_and_push = false
 enabled = false
 idle_seconds = 60
 active_hours = "09:00-17:00"
+
+[external_event]
 
 [ui.estimate_blink]
 enabled = true
@@ -132,6 +138,7 @@ pub struct ConfigFile {
     pub editors: Vec<String>,
     pub startup_git: StartupGitConfig,
     pub auto_free_time: AutoFreeTimeConfig,
+    pub external_event: ExternalEventConfig,
     pub ui: UiConfig,
 }
 
@@ -147,6 +154,8 @@ struct RawConfigFile {
     #[serde(default)]
     auto_free_time: AutoFreeTimeConfig,
     #[serde(default)]
+    external_event: ExternalEventConfig,
+    #[serde(default)]
     ui: UiConfig,
 }
 
@@ -155,6 +164,25 @@ struct RawConfigFile {
 pub struct StartupGitConfig {
     #[serde(default)]
     pub auto_commit_and_push: bool,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExternalEventConfig {
+    interface_file: Option<PathBuf>,
+}
+
+impl ExternalEventConfig {
+    pub fn interface_file(&self) -> Option<&Path> {
+        self.interface_file.as_deref()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_interface_file_for_test(interface_file: PathBuf) -> Self {
+        Self {
+            interface_file: Some(interface_file),
+        }
+    }
 }
 
 pub(super) fn ensure_config_file(path: &Path) -> Result<(), String> {
@@ -183,13 +211,33 @@ pub fn load_config_file(path: impl AsRef<Path>) -> Result<ConfigFile, String> {
         )
     })?;
 
+    let external_event = resolve_external_event_path(path, file.external_event)?;
+
     Ok(ConfigFile {
         keybindings: file.keybindings,
         editors: normalize_editors(file.editors),
         startup_git: file.startup_git,
         auto_free_time: file.auto_free_time,
+        external_event,
         ui: file.ui,
     })
+}
+
+fn resolve_external_event_path(
+    config_path: &Path,
+    mut config: ExternalEventConfig,
+) -> Result<ExternalEventConfig, String> {
+    let Some(interface_file) = &mut config.interface_file else {
+        return Ok(config);
+    };
+    if interface_file.as_os_str().is_empty() {
+        return Err("external_event.interface_file は空にできません".to_string());
+    }
+    if interface_file.is_relative() {
+        let config_dir = config_path.parent().unwrap_or_else(|| Path::new(""));
+        *interface_file = config_dir.join(&*interface_file);
+    }
+    Ok(config)
 }
 
 pub fn normalize_editors(editors: Vec<String>) -> Vec<String> {
@@ -300,6 +348,22 @@ fn ensure_config_defaults(path: &Path) -> Result<(), String> {
             toml::Value::Boolean(false),
         );
         changed = true;
+    }
+
+    if !table.contains_key("external_event") {
+        table.insert(
+            "external_event".to_string(),
+            toml::Value::Table(toml::Table::new()),
+        );
+        changed = true;
+    } else if !table
+        .get("external_event")
+        .is_some_and(toml::Value::is_table)
+    {
+        return Err(format!(
+            "config fileのexternal_eventがtableではありません: {}",
+            path.display()
+        ));
     }
 
     changed |= auto_free_time::ensure_auto_free_time_defaults(table, path)?;

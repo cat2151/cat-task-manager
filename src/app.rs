@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::{collections::VecDeque, path::Path};
 
 use chrono::NaiveDate;
 use crossterm::event::{KeyCode, KeyEvent};
@@ -13,8 +13,11 @@ mod blink;
 mod free_time;
 mod model;
 mod stats;
+mod task_events;
 mod timing;
-pub use model::{DailyTask, TaskList, TaskPause, TaskState, TaskTab, ViewMode};
+pub use model::{
+    DailyTask, TaskEvent, TaskEventKind, TaskList, TaskPause, TaskState, TaskTab, ViewMode,
+};
 pub use stats::{AppScreen, HistoryStatsState};
 pub(crate) use timing::{completed_work_duration, validate_task_timing};
 
@@ -49,6 +52,7 @@ pub struct App {
     free_time_active: bool,
     free_time_started_at: Option<chrono::DateTime<chrono::Local>>,
     message: String,
+    pending_task_events: VecDeque<TaskEvent>,
 }
 
 impl App {
@@ -74,6 +78,7 @@ impl App {
             free_time_active: false,
             free_time_started_at: None,
             message: "待機中".to_string(),
+            pending_task_events: VecDeque::new(),
         }
     }
 

@@ -6,6 +6,7 @@ use crossterm::event::KeyModifiers;
 use std::path::PathBuf;
 
 mod free_time;
+mod task_events;
 mod timing;
 mod view;
 

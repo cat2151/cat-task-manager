@@ -1,6 +1,6 @@
 use chrono::Local;
 
-use super::{App, TaskState, ViewMode};
+use super::{App, TaskEventKind, TaskState, ViewMode};
 
 impl App {
     pub(super) fn select_next(&mut self) {
@@ -50,6 +50,7 @@ impl App {
                     let stopped = self.auto_stop_free_time();
                     self.message =
                         format!("開始しました: {name}{}", free_time_stopped_suffix(stopped));
+                    self.queue_task_event(location, TaskEventKind::Started, now);
                 } else {
                     self.message = "前のタスクが完了していません".to_string();
                 }
@@ -64,11 +65,13 @@ impl App {
                 task.completed_at = Some(now);
                 self.message = format!("完了しました: {}", task.name);
                 self.clamp_selection();
+                self.queue_task_event(location, TaskEventKind::Completed, now);
             }
             TaskState::Deferred => {
                 let now = Local::now();
                 let task = self.task_at_mut(location);
-                if task.started_at.is_none() {
+                let first_start = task.started_at.is_none();
+                if first_start {
                     task.started_at = Some(now);
                     task.state = TaskState::InProgress;
                 } else {
@@ -78,6 +81,9 @@ impl App {
                 let name = task.name.clone();
                 let stopped = self.auto_stop_free_time();
                 self.message = format!("再開しました: {name}{}", free_time_stopped_suffix(stopped));
+                if first_start {
+                    self.queue_task_event(location, TaskEventKind::Started, now);
+                }
             }
             TaskState::OnHold => {
                 self.message = "進める前に保留を解除してください".to_string();

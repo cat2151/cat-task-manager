@@ -8,6 +8,9 @@ enabled = false
 idle_seconds = 60
 active_hours = "09:00-17:00"
 
+[external_event]
+# interface_file = "C:/path/to/external-task-event.toml"
+
 [ui.estimate_blink]
 enabled = true
 foreground = "green"

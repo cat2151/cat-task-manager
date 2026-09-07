@@ -8,9 +8,11 @@ mod cli;
 mod clock;
 mod editor;
 mod event;
+mod external_event;
 mod git_snapshot;
 mod history_stats;
 mod logging;
+mod runtime_reload;
 mod self_update;
 mod startup_git;
 mod storage;
@@ -60,6 +62,7 @@ fn run_app() -> Result<(), Box<dyn Error>> {
     let config_file = storage::load_config_file(&paths.config_path)?;
     let startup_git_enabled = config_file.startup_git.auto_commit_and_push;
     let auto_free_time = AutoFreeTimeTracker::new(config_file.auto_free_time);
+    let external_event_config = config_file.external_event;
 
     let mut keybindings = event::KeyBindings::from_config(config_file.keybindings)?;
     let mut editors = config_file.editors;
@@ -80,7 +83,9 @@ fn run_app() -> Result<(), Box<dyn Error>> {
         app.tabs(),
         logging::TaskChangeCause::TaskFileRead,
     )?;
-    task_runtime::persist_tasks(&mut app);
+    if let Err(err) = task_runtime::persist_tasks(&mut app) {
+        app.set_message(err);
+    }
 
     let _terminal_guard = terminal::TerminalGuard::enter()?;
     let mut terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
@@ -111,6 +116,7 @@ fn run_app() -> Result<(), Box<dyn Error>> {
             rx,
             startup_git_enabled,
             auto_free_time,
+            external_event_config,
             ui_config,
         },
     )?;
@@ -123,6 +129,7 @@ struct EventLoopRuntime {
     rx: mpsc::Receiver<AppEvent>,
     startup_git_enabled: bool,
     auto_free_time: AutoFreeTimeTracker,
+    external_event_config: storage::ExternalEventConfig,
     ui_config: storage::UiConfig,
 }
 
@@ -169,7 +176,9 @@ fn run_event_loop(
                 } else {
                     match action {
                         Some(event::KeyAction::Quit) => {
-                            task_runtime::persist_tasks(app);
+                            if let Err(err) = task_runtime::persist_tasks(app) {
+                                app.set_message(err);
+                            }
                             break;
                         }
                         Some(event::KeyAction::Edit) => {
@@ -200,7 +209,7 @@ fn run_event_loop(
                             app.handle_key(key, keybindings);
                             should_persist = false;
                         }
-                        _ => match reload_tasks(paths, app) {
+                        _ => match runtime_reload::reload_tasks(paths, app) {
                             Ok(()) => {
                                 let before = logging::task_snapshots(app.tabs());
                                 let cause = key_change_cause(action);
@@ -235,11 +244,12 @@ fn run_event_loop(
                 }
             }
             AppEvent::ConfigChanged => {
-                match reload_config(
+                match runtime_reload::reload_config(
                     paths,
                     keybindings,
                     editors,
                     &mut runtime.auto_free_time,
+                    &mut runtime.external_event_config,
                     &mut runtime.ui_config,
                 ) {
                     Ok(()) => app.set_message("設定をhot reloadしました"),
@@ -253,7 +263,7 @@ fn run_event_loop(
             AppEvent::TasksChanged => {
                 let before_tabs = app.tabs().to_vec();
                 let before = logging::task_snapshots(app.tabs());
-                match reload_tasks(paths, app) {
+                match runtime_reload::reload_tasks(paths, app) {
                     Ok(()) if task_diff::tabs_differ(&before_tabs, app.tabs()) => {
                         app.set_message("tasks/をhot reloadしました");
                     }
@@ -301,7 +311,13 @@ fn run_event_loop(
             }
         }
         if should_persist {
-            task_runtime::persist_tasks(app);
+            match task_runtime::persist_tasks(app) {
+                Ok(()) => publish_pending_task_events(app, &runtime.external_event_config),
+                Err(err) => {
+                    app.drain_task_events().for_each(drop);
+                    app.set_message(err);
+                }
+            }
         }
         if should_draw {
             terminal.draw(|frame| ui::draw(frame, app, keybindings, &runtime.ui_config))?;
@@ -331,17 +347,21 @@ fn handle_day_changed(
     startup_git_enabled: bool,
     should_persist: &mut bool,
 ) {
-    match reload_tasks(paths, app) {
+    match runtime_reload::reload_tasks(paths, app) {
         Ok(()) if startup_git_enabled => {
-            task_runtime::persist_tasks(app);
             *should_persist = false;
-            app.start_background_work("日付変更前git snapshotを実行中です");
-            git_snapshot::spawn_before_day_change_snapshot(
-                tx.clone(),
-                paths.clone(),
-                logger.clone(),
-                app.current_date,
-            );
+            match task_runtime::persist_tasks(app) {
+                Ok(()) => {
+                    app.start_background_work("日付変更前git snapshotを実行中です");
+                    git_snapshot::spawn_before_day_change_snapshot(
+                        tx.clone(),
+                        paths.clone(),
+                        logger.clone(),
+                        app.current_date,
+                    );
+                }
+                Err(err) => app.set_message(err),
+            }
         }
         Ok(()) => finish_day_change(app, logger, None),
         Err(err) => app.set_message(err),
@@ -378,7 +398,7 @@ fn edit_tasks(
     terminal.clear()?;
 
     match edit_result {
-        Ok(editor) => match reload_tasks(paths, app) {
+        Ok(editor) => match runtime_reload::reload_tasks(paths, app) {
             Ok(()) => app.set_message(format!("{label}.mdを編集しました: {editor}")),
             Err(err) => app.set_message(err),
         },
@@ -388,34 +408,14 @@ fn edit_tasks(
     Ok(())
 }
 
-fn reload_config(
-    paths: &storage::AppPaths,
-    keybindings: &mut event::KeyBindings,
-    editors: &mut Vec<String>,
-    auto_free_time: &mut AutoFreeTimeTracker,
-    ui_config: &mut storage::UiConfig,
-) -> Result<(), String> {
-    storage::ensure_app_storage(paths)?;
-    let config_file = storage::load_config_file(&paths.config_path)?;
-
-    *keybindings = event::KeyBindings::from_config(config_file.keybindings)?;
-    *editors = config_file.editors;
-    auto_free_time.update_config(config_file.auto_free_time);
-    *ui_config = config_file.ui;
-
-    Ok(())
-}
-
-fn reload_tasks(paths: &storage::AppPaths, app: &mut App) -> Result<(), String> {
-    storage::ensure_app_storage(paths)?;
-    let task_files = storage::load_task_files(&paths.tasks_dir)?;
-
-    app.replace_tabs(task_runtime::task_lists_from_files(&task_files));
-    for (index, task_file) in task_files.into_iter().enumerate() {
-        task_runtime::reflect_task_file_status(task_file.status, app, index, false);
+fn publish_pending_task_events(app: &mut App, config: &storage::ExternalEventConfig) {
+    let events = app.drain_task_events().collect::<Vec<_>>();
+    for event in &events {
+        if let Err(err) = external_event::publish(config, event) {
+            app.set_message(err);
+            break;
+        }
     }
-
-    Ok(())
 }
 
 fn key_change_cause(action: Option<event::KeyAction>) -> logging::TaskChangeCause {

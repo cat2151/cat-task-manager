@@ -91,7 +91,7 @@ free timeを手動開始したときに実施中taskが自動保留された場�
 
 ## 設定の形
 
-`config.toml` はエディタ候補、キーバインド、起動時 git snapshot、free time自動開始の設定だけを持つ。タスクは書かない。
+`config.toml` はエディタ候補、キーバインド、起動時 git snapshot、free time自動開始、外部イベント通知の設定を持つ。タスクは書かない。
 
 ```toml
 editors = ["fresh", "zed", "nvim", "code"]
@@ -103,6 +103,9 @@ auto_commit_and_push = false
 enabled = false
 idle_seconds = 60
 active_hours = "09:00-17:00"
+
+[external_event]
+# interface_file = "C:/path/to/external-task-event.toml"
 
 [keybindings]
 j = "next"
@@ -129,6 +132,10 @@ s = "stats"
 free timeは手動開始・自動開始のどちらでも`active_hours`内だけ累積し、時間帯の終了時に停止する。
 `auto_free_time.enabled = true` のときだけ、`active_hours`内で実施中taskがない状態が `idle_seconds` 続くとfree timeを自動開始する。
 終了時刻は時間帯に含まない。`22:00-02:00` のような日跨ぎも指定できる。
+
+`external_event.interface_file` を指定すると、キー操作によるtaskの着手・完了をTOMLへ通知する。
+通知は `tasks/*.md` の保存成功後に原子的に置き換えられ、最新の1件だけを保持する。
+このTOMLは外部アプリ向けの一過性イベントであり、task状態のSSoTではない。
 
 保存場所は Windows の `AppData Local` 配下にまとめる。
 

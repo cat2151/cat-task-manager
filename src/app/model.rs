@@ -87,6 +87,21 @@ pub struct TaskTab {
     pub tasks: Vec<DailyTask>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TaskEventKind {
+    Started,
+    Completed,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TaskEvent {
+    pub kind: TaskEventKind,
+    pub occurred_at: DateTime<Local>,
+    pub task_name: String,
+    pub task_file: PathBuf,
+    pub source_line: u32,
+}
+
 pub(super) fn task_tab_from_list(task_list: TaskList) -> TaskTab {
     let is_free_time_tab = task_list.label == FREE_TIME_TAB_LABEL;
     TaskTab {
