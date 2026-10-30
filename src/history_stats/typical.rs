@@ -16,7 +16,7 @@ pub struct TypicalTaskDuration {
     pub elapsed_seconds: i64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub(crate) struct TaskDurationCandidate {
     task_name: String,
     started_at: DateTime<Local>,

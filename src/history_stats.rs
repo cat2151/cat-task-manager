@@ -1,6 +1,5 @@
 use std::{
     collections::{HashMap, HashSet},
-    fs,
     path::{Path, PathBuf},
     process::{Command, Output, Stdio},
     sync::mpsc::Sender,
@@ -16,10 +15,11 @@ use crate::{
     storage::{self, AppPaths},
 };
 
+mod revision_cache;
 mod typical;
+use revision_cache::RevisionStats;
 pub use typical::TypicalTaskDuration;
 
-const HISTORY_STATS_CACHE_VERSION: u32 = 6;
 const HISTORY_STATS_TIMEOUT: StdDuration = StdDuration::from_secs(60);
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -35,13 +35,6 @@ pub struct TaskNameCount {
     pub name: String,
     pub count: usize,
     pub typical_task_duration: Option<TypicalTaskDuration>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct HistoryStatsCacheFile {
-    version: u32,
-    head: String,
-    report: HistoryStatsReport,
 }
 
 enum CommandOutcome {
@@ -62,50 +55,19 @@ pub fn spawn_history_stats(tx: Sender<AppEvent>, paths: AppPaths) {
 }
 
 fn load_or_collect_history_stats(paths: &AppPaths) -> Result<HistoryStatsReport, String> {
-    let head = current_head(&paths.root_dir)?;
-    if let Some(report) = read_cached_history_stats(&paths.history_stats_cache_path, &head) {
-        return Ok(report);
+    let mut cached = revision_cache::read_revision_cache(&paths.history_stats_cache_path);
+    let cached_count = cached.len();
+    let result = collect_history_stats(&paths.root_dir, &mut cached);
+    if cached.len() != cached_count {
+        revision_cache::write_revision_cache(&paths.history_stats_cache_path, &cached);
     }
-
-    let report = collect_history_stats(&paths.root_dir)?;
-    if !report.timed_out {
-        write_cached_history_stats(&paths.history_stats_cache_path, &head, &report);
-    }
-    Ok(report)
+    result
 }
 
-fn current_head(root_dir: &Path) -> Result<String, String> {
-    let deadline = Instant::now() + HISTORY_STATS_TIMEOUT;
-    let Some(stdout) = git_stdout(root_dir, &["rev-parse", "HEAD"], deadline)? else {
-        return Err("git HEAD の取得がtimeoutしました".to_string());
-    };
-    Ok(stdout.trim().to_string())
-}
-
-fn read_cached_history_stats(path: &Path, head: &str) -> Option<HistoryStatsReport> {
-    let raw = fs::read_to_string(path).ok()?;
-    let cache = serde_json::from_str::<HistoryStatsCacheFile>(&raw).ok()?;
-    (cache.version == HISTORY_STATS_CACHE_VERSION && cache.head == head).then_some(cache.report)
-}
-
-fn write_cached_history_stats(path: &Path, head: &str, report: &HistoryStatsReport) {
-    let Some(parent) = path.parent() else {
-        return;
-    };
-    let cache = HistoryStatsCacheFile {
-        version: HISTORY_STATS_CACHE_VERSION,
-        head: head.to_string(),
-        report: report.clone(),
-    };
-    let Ok(raw) = serde_json::to_string(&cache) else {
-        return;
-    };
-
-    let _ = fs::create_dir_all(parent);
-    let _ = fs::write(path, raw);
-}
-
-fn collect_history_stats(root_dir: &Path) -> Result<HistoryStatsReport, String> {
+fn collect_history_stats(
+    root_dir: &Path,
+    cached: &mut HashMap<String, RevisionStats>,
+) -> Result<HistoryStatsReport, String> {
     let deadline = Instant::now() + HISTORY_STATS_TIMEOUT;
 
     let Some(revisions_stdout) =
@@ -122,9 +84,7 @@ fn collect_history_stats(root_dir: &Path) -> Result<HistoryStatsReport, String> 
     let revisions = revisions_stdout
         .lines()
         .map(str::trim)
-        .filter(|line| !line.is_empty())
-        .map(str::to_string)
-        .collect::<Vec<_>>();
+        .filter(|line| !line.is_empty());
 
     let mut task_counts = HashMap::new();
     let mut task_duration_candidates = HashSet::new();
@@ -133,49 +93,26 @@ fn collect_history_stats(root_dir: &Path) -> Result<HistoryStatsReport, String> 
     let mut timed_out = false;
 
     for revision in revisions {
-        if Instant::now() >= deadline {
-            timed_out = true;
-            break;
-        }
-        let mut revision_tasks = HashSet::new();
-
-        let Some(paths_stdout) = git_stdout(
-            root_dir,
-            &["ls-tree", "-r", "--name-only", &revision, "tasks"],
-            deadline,
-        )?
-        else {
-            timed_out = true;
-            break;
-        };
-
-        for task_path in task_paths(&paths_stdout) {
-            if Instant::now() >= deadline {
+        if !cached.contains_key(revision) {
+            if timed_out || Instant::now() >= deadline {
                 timed_out = true;
-                break;
+                continue;
             }
-
-            let object = format!("{revision}:{task_path}");
-            let Some(raw) = git_stdout(root_dir, &["show", &object], deadline)? else {
-                timed_out = true;
-                break;
-            };
-
-            match task_stats_from_raw(task_path, &raw) {
-                Ok(stats) => {
-                    for task_name in stats.task_names {
-                        revision_tasks.insert(task_name);
-                    }
-                    task_duration_candidates.extend(stats.task_duration_candidates);
+            match read_revision_stats(root_dir, revision, deadline)? {
+                Some(stats) => {
+                    cached.insert(revision.to_string(), stats);
                 }
-                Err(_) => skipped_files += 1,
+                None => {
+                    timed_out = true;
+                    continue;
+                }
             }
         }
 
-        if timed_out {
-            break;
-        }
-        add_revision_tasks(&mut task_counts, revision_tasks);
+        let stats = &cached[revision];
+        add_revision_tasks(&mut task_counts, stats.task_names.iter().cloned());
+        task_duration_candidates.extend(stats.task_duration_candidates.iter().cloned());
+        skipped_files += stats.skipped_files;
         scanned_revisions += 1;
     }
 
@@ -186,6 +123,41 @@ fn collect_history_stats(root_dir: &Path) -> Result<HistoryStatsReport, String> 
         skipped_files,
         timed_out,
     ))
+}
+
+/// timeout したら `None`。途中まで読んだ revision を cache に入れると、残りのファイルが欠けたまま固定されるため。
+fn read_revision_stats(
+    root_dir: &Path,
+    revision: &str,
+    deadline: Instant,
+) -> Result<Option<RevisionStats>, String> {
+    let Some(paths_stdout) = git_stdout(
+        root_dir,
+        &["ls-tree", "-r", "--name-only", revision, "tasks"],
+        deadline,
+    )?
+    else {
+        return Ok(None);
+    };
+
+    let mut stats = RevisionStats::default();
+    for task_path in task_paths(&paths_stdout) {
+        let object = format!("{revision}:{task_path}");
+        let Some(raw) = git_stdout(root_dir, &["show", &object], deadline)? else {
+            return Ok(None);
+        };
+
+        match task_stats_from_raw(task_path, &raw) {
+            Ok(file_stats) => {
+                stats.task_names.extend(file_stats.task_names);
+                stats
+                    .task_duration_candidates
+                    .extend(file_stats.task_duration_candidates);
+            }
+            Err(_) => stats.skipped_files += 1,
+        }
+    }
+    Ok(Some(stats))
 }
 
 fn report_from_counts(
@@ -204,7 +176,10 @@ fn report_from_counts(
     }
 }
 
-fn add_revision_tasks(task_counts: &mut HashMap<String, usize>, revision_tasks: HashSet<String>) {
+fn add_revision_tasks(
+    task_counts: &mut HashMap<String, usize>,
+    revision_tasks: impl IntoIterator<Item = String>,
+) {
     for task in revision_tasks {
         *task_counts.entry(task).or_insert(0) += 1;
     }

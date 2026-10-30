@@ -1,17 +1,5 @@
 use super::*;
-
-fn report() -> HistoryStatsReport {
-    HistoryStatsReport {
-        scanned_revisions: 2,
-        skipped_files: 0,
-        timed_out: false,
-        task_counts: vec![TaskNameCount {
-            name: "朝食をいただく".to_string(),
-            count: 2,
-            typical_task_duration: None,
-        }],
-    }
-}
+use std::fs;
 
 fn cache_path(name: &str) -> PathBuf {
     std::env::temp_dir().join(format!(
@@ -21,23 +9,29 @@ fn cache_path(name: &str) -> PathBuf {
 }
 
 #[test]
-fn cached_history_stats_round_trips_for_matching_head() {
-    let path = cache_path("matching-head");
-    let report = report();
+fn revision_cache_round_trips() {
+    let path = cache_path("round-trip");
+    let revisions = HashMap::from([(
+        "rev-a".to_string(),
+        RevisionStats {
+            task_names: HashSet::from(["朝食をいただく".to_string()]),
+            task_duration_candidates: Vec::new(),
+            skipped_files: 1,
+        },
+    )]);
 
-    write_cached_history_stats(&path, "head-a", &report);
+    revision_cache::write_revision_cache(&path, &revisions);
 
-    assert_eq!(read_cached_history_stats(&path, "head-a"), Some(report));
+    assert_eq!(revision_cache::read_revision_cache(&path), revisions);
     let _ = fs::remove_file(path);
 }
 
 #[test]
-fn cached_history_stats_ignores_other_head() {
-    let path = cache_path("other-head");
+fn revision_cache_is_empty_for_unreadable_file() {
+    let path = cache_path("unreadable");
+    fs::write(&path, "{\"version\":5}").unwrap();
 
-    write_cached_history_stats(&path, "head-a", &report());
-
-    assert_eq!(read_cached_history_stats(&path, "head-b"), None);
+    assert!(revision_cache::read_revision_cache(&path).is_empty());
     let _ = fs::remove_file(path);
 }
 
