@@ -4,15 +4,25 @@ use crossterm::{
     cursor::{Hide, Show},
     event::{DisableFocusChange, EnableFocusChange},
     execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    terminal::{
+        disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen, SetTitle,
+    },
 };
+
+const TITLE: &str = "cat-task-manager";
 
 pub struct TerminalGuard;
 
 impl TerminalGuard {
     pub fn enter() -> Result<Self, Box<dyn std::error::Error>> {
         enable_raw_mode()?;
-        execute!(io::stdout(), EnterAlternateScreen, EnableFocusChange, Hide)?;
+        execute!(
+            io::stdout(),
+            EnterAlternateScreen,
+            EnableFocusChange,
+            Hide,
+            SetTitle(TITLE)
+        )?;
         Ok(Self)
     }
 
@@ -24,7 +34,13 @@ impl TerminalGuard {
 
     pub fn resume() -> Result<(), Box<dyn std::error::Error>> {
         enable_raw_mode()?;
-        execute!(io::stdout(), EnterAlternateScreen, EnableFocusChange, Hide)?;
+        execute!(
+            io::stdout(),
+            EnterAlternateScreen,
+            EnableFocusChange,
+            Hide,
+            SetTitle(TITLE)
+        )?;
         Ok(())
     }
 }
