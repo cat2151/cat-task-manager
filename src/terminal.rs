@@ -9,7 +9,7 @@ use crossterm::{
     },
 };
 
-const TITLE: &str = "cat-task-manager";
+pub const TITLE: &str = "cat-task-manager";
 
 pub struct TerminalGuard;
 

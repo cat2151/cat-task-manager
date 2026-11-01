@@ -3,6 +3,7 @@ pub enum Command {
     RunApp,
     Update,
     Check,
+    ActivateTab,
     Help,
 }
 
@@ -12,6 +13,8 @@ Usage: cat-task-manager [COMMAND]
 Commands:
   update    Self-update cat-task-manager from GitHub
   check     Compare this build with the remote main branch
+  activate-tab
+            (Windows) Activate the cat-task-manager tab in Windows Terminal
   help      Print help
 ";
 
@@ -26,6 +29,7 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Command, String> 
     let parsed = match command.as_str() {
         "update" => Command::Update,
         "check" => Command::Check,
+        "activate-tab" => Command::ActivateTab,
         "help" | "-h" | "--help" => Command::Help,
         unknown => return Err(format!("unknown command: {unknown}")),
     };
@@ -63,6 +67,14 @@ mod tests {
         assert_eq!(
             parse(args(&["cat-task-manager", "check"])),
             Ok(Command::Check)
+        );
+    }
+
+    #[test]
+    fn parses_activate_tab_command() {
+        assert_eq!(
+            parse(args(&["cat-task-manager", "activate-tab"])),
+            Ok(Command::ActivateTab)
         );
     }
 

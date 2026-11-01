@@ -12,3 +12,6 @@ serde_json = "1.0.145"
 toml = "1.1.2"
 chrono = { version = "0.4.44", features = ["serde"] }
 cat-self-update-lib = { git = "https://github.com/cat2151/cat-self-update", branch = "main", package = "cat-self-update-lib" }
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62.2", features = ["Win32_System_Com", "Win32_System_Ole", "Win32_System_Variant", "Win32_UI_Accessibility"] }

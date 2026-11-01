@@ -19,6 +19,7 @@ mod storage;
 mod task_diff;
 mod task_runtime;
 mod terminal;
+mod terminal_tab;
 mod ui;
 
 use app::App;
@@ -38,6 +39,13 @@ fn main() -> Result<(), Box<dyn Error>> {
         Ok(cli::Command::Check) => {
             if let Err(err) = self_update::run_check() {
                 eprintln!("Check failed: {err}");
+                std::process::exit(1);
+            }
+            Ok(())
+        }
+        Ok(cli::Command::ActivateTab) => {
+            if let Err(err) = terminal_tab::activate() {
+                eprintln!("Activate tab failed: {err}");
                 std::process::exit(1);
             }
             Ok(())
