@@ -43,13 +43,6 @@ fn main() -> Result<(), Box<dyn Error>> {
             }
             Ok(())
         }
-        Ok(cli::Command::ActivateTab) => {
-            if let Err(err) = terminal_tab::activate() {
-                eprintln!("Activate tab failed: {err}");
-                std::process::exit(1);
-            }
-            Ok(())
-        }
         Ok(cli::Command::Help) => {
             print!("{}", cli::HELP);
             Ok(())
@@ -62,6 +55,9 @@ fn main() -> Result<(), Box<dyn Error>> {
 }
 
 fn run_app() -> Result<(), Box<dyn Error>> {
+    if terminal_tab::activate_running_instance() {
+        return Ok(());
+    }
     let paths = storage::app_paths()?;
     storage::ensure_app_storage(&paths)?;
     let logger = logging::AppLogger::new(&paths.root_dir)?;
