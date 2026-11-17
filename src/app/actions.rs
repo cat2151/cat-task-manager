@@ -165,12 +165,23 @@ impl App {
     }
 
     pub(super) fn toggle_view_mode(&mut self) {
+        let selected_location = self.selected_task_location().map(|(_, location)| location);
         self.view_mode = match self.view_mode {
             ViewMode::OneLine => ViewMode::Incomplete,
             ViewMode::Incomplete => ViewMode::All,
             ViewMode::All => ViewMode::OneLine,
         };
-        self.clamp_selection();
+        let selected_visible = selected_location.and_then(|selected_location| {
+            self.current_task_entries()
+                .into_iter()
+                .filter(|(_, location, task)| self.task_is_visible(*location, task))
+                .position(|(_, location, _)| location == selected_location)
+        });
+        if let Some(selected_visible) = selected_visible {
+            self.selected_visible = selected_visible;
+        } else {
+            self.clamp_selection();
+        }
         self.message = format!("表示モード: {}", self.view_mode.label());
     }
 

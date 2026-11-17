@@ -13,6 +13,18 @@ fn starts_in_one_line_mode_and_toggles_view_mode() {
 }
 
 #[test]
+fn toggling_view_mode_keeps_the_selected_task_when_rows_are_added() {
+    let mut app = app();
+    app.select_next_tab();
+    app.tabs[0].tasks[0].state = TaskState::Deferred;
+    assert_eq!(app.selected_visible_task().unwrap().1.name, "b");
+
+    app.toggle_view_mode();
+
+    assert_eq!(app.selected_visible_task().unwrap().1.name, "b");
+}
+
+#[test]
 fn estimate_blink_context_requires_not_started_selected_task() {
     let mut app = app();
     app.select_next_tab();
