@@ -26,6 +26,8 @@ fn resuming_an_already_started_task_does_not_queue_another_start() {
     app.drain_task_events().for_each(drop);
     app.defer_selected();
     app.toggle_view_mode();
+    app.select_previous();
+    assert_eq!(app.selected_visible_task().unwrap().1.name, "a");
 
     app.advance_selected();
 

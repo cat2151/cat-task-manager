@@ -62,6 +62,8 @@ fn advance_resumes_deferred_task() {
     assert_eq!(app.tabs[0].tasks[0].pauses.len(), 1);
 
     app.toggle_view_mode();
+    app.select_previous();
+    assert_eq!(app.selected_visible_task().unwrap().1.name, "a");
     app.advance_selected();
 
     assert_eq!(app.tabs[0].tasks[0].state, TaskState::InProgress);

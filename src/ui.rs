@@ -112,8 +112,9 @@ fn draw_footer(frame: &mut Frame, area: Rect, app: &App) {
 }
 
 fn draw_help(frame: &mut Frame, area: Rect, keybindings: &KeyBindings) {
-    let area = centered_rect(58, 14, area);
-    let help = Paragraph::new(help_lines(keybindings))
+    let lines = help_lines(keybindings);
+    let area = centered_rect(58, lines.len() as u16 + 2, area);
+    let help = Paragraph::new(lines)
         .style(base_style())
         .block(themed_block("help"));
 
@@ -142,34 +143,61 @@ fn draw_background_overlay(frame: &mut Frame, area: Rect, app: &App) {
 }
 
 fn help_lines(keybindings: &KeyBindings) -> Vec<Line<'static>> {
-    vec![
-        help_line(keybindings.label_for(KeyAction::Next), "次のタスクへ移動"),
-        help_line(
-            keybindings.label_for(KeyAction::Previous),
-            "前のタスクへ移動",
+    let label = |action| keybindings.label_for(action);
+    let groups: [(Color, Vec<(String, &str)>); 4] = [
+        (
+            MONOKAI_BLUE,
+            vec![
+                (label(KeyAction::Next), "次のタスクへ移動"),
+                (label(KeyAction::Previous), "前のタスクへ移動"),
+                (label(KeyAction::NextTab), "次のタブ"),
+                (label(KeyAction::PreviousTab), "前のタブ"),
+            ],
         ),
-        help_line(keybindings.label_for(KeyAction::Advance), "開始/完了"),
-        help_line(
-            keybindings.label_for(KeyAction::Hold),
-            "保留（他タブへ）/再開",
+        (
+            MONOKAI_GREEN,
+            vec![
+                (label(KeyAction::Advance), "開始/完了"),
+                (label(KeyAction::Hold), "保留（他タブへ）/再開"),
+                (label(KeyAction::Defer), "後回し"),
+                (label(KeyAction::FreeTime), "free time 切替"),
+            ],
         ),
-        help_line(keybindings.label_for(KeyAction::Defer), "後回し"),
-        help_line(keybindings.label_for(KeyAction::FreeTime), "free time 切替"),
-        help_line(keybindings.label_for(KeyAction::NextTab), "次のタブ"),
-        help_line(keybindings.label_for(KeyAction::PreviousTab), "前のタブ"),
-        help_line(keybindings.label_for(KeyAction::ToggleView), "表示切替"),
-        help_line(keybindings.label_for(KeyAction::Stats), "過去データ統計"),
-        help_line(keybindings.label_for(KeyAction::Edit), "現在のタブのmd編集"),
-        help_line(keybindings.label_for(KeyAction::Quit), "終了"),
-        help_line(keybindings.label_for(KeyAction::Help), "help 表示/閉じる"),
-        help_line("esc", "help を閉じる"),
-    ]
+        (
+            MONOKAI_PINK,
+            vec![
+                (label(KeyAction::ToggleView), "表示切替"),
+                (label(KeyAction::Stats), "過去データ統計"),
+            ],
+        ),
+        (
+            MONOKAI_YELLOW,
+            vec![
+                (label(KeyAction::Edit), "現在のタブのmd編集"),
+                (label(KeyAction::Quit), "終了"),
+                (label(KeyAction::Help), "help 表示/閉じる"),
+                ("esc".to_string(), "help を閉じる"),
+            ],
+        ),
+    ];
+
+    let mut lines = Vec::new();
+    for (index, (color, entries)) in groups.into_iter().enumerate() {
+        if index > 0 {
+            lines.push(Line::from(""));
+        }
+        lines.extend(
+            entries
+                .into_iter()
+                .map(|(key, description)| help_line(key, description, color)),
+        );
+    }
+    lines
 }
 
-fn help_line(key: impl Into<String>, description: &str) -> Line<'static> {
-    let key = key.into();
+fn help_line(key: String, description: &str, key_color: Color) -> Line<'static> {
     Line::from(vec![
-        Span::styled(format!("{key:<12}"), emphasized_style(MONOKAI_YELLOW)),
+        Span::styled(format!("{key:<12}"), emphasized_style(key_color)),
         Span::styled(description.to_string(), base_style()),
     ])
 }
